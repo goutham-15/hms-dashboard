@@ -7,32 +7,46 @@ except Exception:  # pragma: no cover
     from langchain.text_splitter import RecursiveCharacterTextSplitter  # type: ignore
 
 
-try:
-    from langchain_chroma import Chroma
-except Exception:  # pragma: no cover
-    from langchain_community.vectorstores import Chroma  # type: ignore
+import chromadb
+from chromadb.config import Settings as ChromaSettings
+from chromadb.utils import embedding_functions
+from langchain_core.documents import Document
 
 
 class ChromaVectorDB:
     """
-    Minimal Chroma wrapper for storing OCR chunks with page metadata.
+    Minimal ChromaDB wrapper for storing OCR chunks with page metadata.
     """
 
     def __init__(
         self,
         *,
-        persist_directory: str | Path,
+        persist_directory: str | Path | None = None,
         collection_name: str,
-        embedding_function: Any,
+        embedding_function: Any | None = None,
+        embedding_model: str = "all-MiniLM-L6-v2",
     ):
-        self.persist_directory = str(persist_directory)
+        self.persist_directory = str(persist_directory) if persist_directory else ""
         self.collection_name = collection_name
         self.embedding_function = embedding_function
+        self.embedding_model = embedding_model
 
-        self.store = Chroma(
-            collection_name=self.collection_name,
-            embedding_function=self.embedding_function,
-            persist_directory=self.persist_directory,
+        if self.persist_directory:
+            self.client = chromadb.PersistentClient(
+                path=self.persist_directory,
+                settings=ChromaSettings(anonymized_telemetry=False),
+            )
+        else:
+            self.client = chromadb.Client(
+                settings=ChromaSettings(anonymized_telemetry=False, is_persistent=False),
+            )
+
+        ef = self.embedding_function or embedding_functions.SentenceTransformerEmbeddingFunction(
+            model_name=self.embedding_model
+        )
+        self.collection = self.client.get_or_create_collection(
+            name=self.collection_name,
+            embedding_function=ef,
         )
 
     def add_pages(
@@ -46,6 +60,7 @@ class ChromaVectorDB:
     ) -> int:
         texts: list[str] = []
         metadatas: list[dict[str, Any]] = []
+        ids: list[str] = []
 
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
@@ -68,9 +83,10 @@ class ChromaVectorDB:
                         **(extra_metadata or {}),
                     }
                 )
+                ids.append(f"{source_id}:{page_number}:{chunk_index}")
 
         if texts:
-            self.store.add_texts(texts=texts, metadatas=metadatas)
+            self.collection.add(documents=texts, metadatas=metadatas, ids=ids)
         return len(texts)
 
     def search(
@@ -81,8 +97,28 @@ class ChromaVectorDB:
         where: Optional[dict[str, Any]] = None,
     ):
         """
-        Returns LangChain Document objects.
+        Returns LangChain `Document` objects.
         """
-        if where:
-            return self.store.similarity_search(query=query, k=k, filter=where)
-        return self.store.similarity_search(query=query, k=k)
+        res = self.collection.query(
+            query_texts=[query],
+            n_results=k,
+            where=where,
+            include=["documents", "metadatas"],
+        )
+        documents = (res.get("documents") or [[]])[0] or []
+        metadatas = (res.get("metadatas") or [[]])[0] or []
+        out: list[Document] = []
+        for text, meta in zip(documents, metadatas):
+            out.append(Document(page_content=text or "", metadata=meta or {}))
+        return out
+
+    def delete_source(self, *, source_id: str) -> int:
+        """
+        Delete all vectors for a specific document (source_id).
+        """
+        got = self.collection.get(where={"source_id": source_id}, include=[])
+        ids = got.get("ids") or []
+        if not ids:
+            return 0
+        self.collection.delete(ids=ids)
+        return len(ids)
