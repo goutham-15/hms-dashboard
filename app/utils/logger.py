@@ -2,82 +2,66 @@ import logging
 import sys
 from pathlib import Path
 from datetime import datetime
-from typing import Optional
+
+
+LOG_DIR = Path("logs")
+LOG_FILE = "app.log"
+
+_initialized = False
+
+
+def _setup_logging():
+    """Setup root logger with single file and console handlers."""
+    global _initialized
+    
+    if _initialized:
+        return
+    
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    log_file_path = LOG_DIR / LOG_FILE
+    
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)
+    
+    if root_logger.handlers:
+        root_logger.handlers.clear()
+    
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)
+    console_format = logging.Formatter(
+        fmt='%(asctime)s | %(levelname)-8s | %(name)s | %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    console_handler.setFormatter(console_format)
+    
+    file_handler = logging.FileHandler(log_file_path, mode='a', encoding='utf-8')
+    file_handler.setLevel(logging.INFO)
+    file_format = logging.Formatter(
+        fmt='%(asctime)s | %(levelname)-8s | %(name)s | %(funcName)s:%(lineno)d | %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    file_handler.setFormatter(file_format)
+    
+    root_logger.addHandler(console_handler)
+    root_logger.addHandler(file_handler)
+    
+    _initialized = True
 
 
 class Logger:
     """
-    A logger class that logs to both file and console with configurable formatting.
+    A logger wrapper that uses a single shared log file for all loggers.
     """
     
-    def __init__(
-        self,
-        name: str = "app",
-        log_dir: str | Path = "logs",
-        log_file: Optional[str] = None,
-        level: int = logging.INFO,
-        console_level: Optional[int] = None,
-        file_level: Optional[int] = None
-    ):
+    def __init__(self, name: str = "app"):
         """
         Initialize the Logger.
         
         Args:
-            name: Logger name
-            log_dir: Directory to store log files
-            log_file: Specific log file name (default: app_YYYYMMDD.log)
-            level: Default logging level for both console and file
-            console_level: Specific level for console (overrides level)
-            file_level: Specific level for file (overrides level)
+            name: Logger name (used to identify the source in logs)
         """
-        self.name = name
-        self.log_dir = Path(log_dir)
-        self.log_dir.mkdir(parents=True, exist_ok=True)
-        
-        if log_file is None:
-            timestamp = datetime.now().strftime("%Y%m%d")
-            log_file = f"{name}_{timestamp}.log"
-        
-        self.log_file_path = self.log_dir / log_file
-        
+        _setup_logging()
         self.logger = logging.getLogger(name)
-        self.logger.setLevel(logging.DEBUG)
-        self.logger.handlers.clear()
-        
-        console_level = console_level if console_level is not None else level
-        file_level = file_level if file_level is not None else level
-        
-        console_handler = self._create_console_handler(console_level)
-        file_handler = self._create_file_handler(file_level)
-        
-        self.logger.addHandler(console_handler)
-        self.logger.addHandler(file_handler)
-    
-    def _create_console_handler(self, level: int) -> logging.StreamHandler:
-        """Create and configure console handler with colored output."""
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setLevel(level)
-        
-        console_format = logging.Formatter(
-            fmt='%(asctime)s | %(levelname)-8s | %(name)s | %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
-        console_handler.setFormatter(console_format)
-        
-        return console_handler
-    
-    def _create_file_handler(self, level: int) -> logging.FileHandler:
-        """Create and configure file handler."""
-        file_handler = logging.FileHandler(self.log_file_path, mode='a', encoding='utf-8')
-        file_handler.setLevel(level)
-        
-        file_format = logging.Formatter(
-            fmt='%(asctime)s | %(levelname)-8s | %(name)s | %(funcName)s:%(lineno)d | %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
-        file_handler.setFormatter(file_format)
-        
-        return file_handler
     
     def debug(self, message: str, *args, **kwargs):
         """Log debug message."""
@@ -102,45 +86,20 @@ class Logger:
     def exception(self, message: str, *args, **kwargs):
         """Log exception with traceback."""
         self.logger.exception(message, *args, **kwargs)
-    
-    @classmethod
-    def get_logger(
-        cls,
-        name: str = "app",
-        log_dir: str | Path = "logs",
-        level: int = logging.INFO
-    ) -> "Logger":
-        """
-        Factory method to get a logger instance.
-        
-        Args:
-            name: Logger name
-            log_dir: Directory to store log files
-            level: Logging level
-            
-        Returns:
-            Logger instance
-        """
-        return cls(name=name, log_dir=log_dir, level=level)
 
 
-def get_logger(
-    name: str = "app",
-    log_dir: str | Path = "logs",
-    level: int = logging.INFO
-) -> Logger:
+def get_logger(name: str = "app") -> Logger:
     """
-    Convenience function to get a logger instance.
+    Get a logger instance with the specified name.
+    All loggers share the same single log file.
     
     Args:
-        name: Logger name
-        log_dir: Directory to store log files
-        level: Logging level
+        name: Logger name (used to identify the source in logs)
         
     Returns:
         Logger instance
     """
-    return Logger.get_logger(name=name, log_dir=log_dir, level=level)
+    return Logger(name=name)
 
 
 logger = get_logger()

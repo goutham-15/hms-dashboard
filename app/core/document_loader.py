@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Optional, List
 import PyPDF2
-from pdf2image import convert_from_path
+from pdf2image import convert_from_path, pdfinfo_from_path
 import pytesseract
 from app.utils.logger import get_logger
 
@@ -102,6 +102,90 @@ class DocumentLoader:
             raise
         
         return text.strip()
+
+    def extract_page_text_with_ocr(
+        self,
+        pdf_path: str | Path,
+        page_number: int,
+        dpi: int = 300,
+        language: str = "eng",
+    ) -> str:
+        """
+        OCR a single 1-based page from a PDF.
+
+        This avoids building one huge OCR text blob for the whole document, and
+        enables page-by-page downstream processing.
+        """
+        pdf_path = Path(pdf_path)
+        if not pdf_path.exists():
+            raise FileNotFoundError(f"PDF file not found: {pdf_path}")
+        if page_number < 1:
+            raise ValueError("page_number must be >= 1")
+
+        logger.info(f"Converting page {page_number} to image at {dpi} DPI: {pdf_path.name}")
+        images = convert_from_path(pdf_path, dpi=dpi, first_page=page_number, last_page=page_number)
+        if not images:
+            return ""
+        return pytesseract.image_to_string(images[0], lang=language).strip()
+
+    def iter_pdf_pages_text(
+        self,
+        pdf_path: str | Path,
+        use_ocr: bool = False,
+        ocr_threshold: int = 100,
+        dpi: int = 300,
+        language: str = "eng",
+    ):
+        """
+        Yield (page_number, page_text, method) for each page in the PDF.
+
+        - If use_ocr=True, OCR every page.
+        - Otherwise, try direct text extraction per page; if the extracted text
+          is shorter than ocr_threshold characters, OCR that page only.
+        """
+        pdf_path = Path(pdf_path)
+        if not pdf_path.exists():
+            raise FileNotFoundError(f"PDF file not found: {pdf_path}")
+
+        try:
+            info = pdfinfo_from_path(pdf_path)
+            num_pages = int(info.get("Pages", 0))
+        except Exception:
+            num_pages = 0
+
+        with open(pdf_path, "rb") as f:
+            pdf_reader = PyPDF2.PdfReader(f)
+            if not num_pages:
+                num_pages = len(pdf_reader.pages)
+
+            logger.info(f"Iterating {num_pages} pages for incremental extraction: {pdf_path.name}")
+
+            for idx in range(num_pages):
+                page_number = idx + 1
+                page_text = ""
+                method = "direct"
+
+                if not use_ocr:
+                    try:
+                        page_text = (pdf_reader.pages[idx].extract_text() or "").strip()
+                    except Exception as e:
+                        logger.warning(f"Direct extraction failed for page {page_number}: {e}")
+                        page_text = ""
+
+                if use_ocr or len(page_text) < ocr_threshold:
+                    method = "ocr"
+                    try:
+                        page_text = self.extract_page_text_with_ocr(
+                            pdf_path,
+                            page_number=page_number,
+                            dpi=dpi,
+                            language=language,
+                        )
+                    except Exception as e:
+                        logger.error(f"OCR failed for page {page_number}: {e}")
+                        page_text = ""
+
+                yield page_number, page_text, method
     
     def extract_text_hybrid(
         self,

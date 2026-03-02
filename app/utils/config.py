@@ -27,7 +27,7 @@ class DatabaseConfig(BaseSettings):
 
 class BedrockConfig(BaseSettings):
     region: str = Field(default="us-east-1")
-    modelid: str = Field(default="anthropic.claude-v2")
+    model_id: str = Field(default="meta.llama3-2-3b-instruct-v1:0")
 
 
 class AWSConfig(BaseSettings):

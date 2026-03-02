@@ -1,7 +1,7 @@
 from enum import Enum
 from typing import Any, List, Optional, Union
 from pydantic import BaseModel, Field
-from datetime import date, datetime
+import datetime as dt
 
 
 class GenderEnum(str, Enum):
@@ -66,8 +66,8 @@ class ThyrocareReportInfo(BaseModel):
     """Thyrocare lab report information"""
     report_id: str = Field(..., description="Extract the unique report identifier or report number. Look for 'Report ID', 'Report No', 'Lab No', or similar labels. This is required.")
     report_version: Optional[str] = Field("", description="Extract the report version if mentioned (e.g., 'v1.0', 'Version 2'). May not always be present.")
-    date: date = Field(..., description="Extract the report date. Look for 'Report Date', 'Collection Date', 'Date', or timestamp. Convert to YYYY-MM-DD format. This is required.")
-    generated_at: Optional[datetime] = Field(None, description="Extract the timestamp when the report was generated if available. Look for 'Generated at', 'Printed on', or similar. Convert to ISO datetime format.")
+    report_date: dt.date = Field(..., description="Extract the report date. Look for 'Report Date', 'Collection Date', 'Date', or timestamp. Convert to YYYY-MM-DD format. This is required.")
+    generated_at: Optional[dt.datetime] = Field(None, description="Extract the timestamp when the report was generated if available. Look for 'Generated at', 'Printed on', or similar. Convert to ISO datetime format.")
     lab_name: str = Field(..., description="Extract the laboratory name (e.g., 'Thyrocare Technologies Ltd', 'Thyrocare Labs'). Usually at the top of the report. This is required.")
     lab_code: Optional[str] = Field("", description="Extract the laboratory code or branch code if present (e.g., 'THY001', 'MUM-001').")
     status: Optional[ReportStatusEnum] = Field(None, description="Extract the report status. Look for 'Status:', 'Report Status:', or similar. Should be PRELIMINARY, FINAL, or CORRECTED.")
@@ -94,7 +94,7 @@ class DoctorVerification(BaseModel):
     doctor_name: Optional[str] = Field("", description="Extract the verifying/signing doctor's name. Look for 'Verified by', 'Signed by', 'Pathologist', or signature sections at the bottom of the report.")
     designation: Optional[str] = Field("", description="Extract the doctor's designation or title (e.g., 'Pathologist', 'Senior Consultant', 'MD Pathology'). Usually near the doctor's name.")
     license_number: Optional[str] = Field("", description="Extract the doctor's medical license or registration number. Look for 'License No', 'Reg No', 'MCI No', or similar.")
-    signed_at: Optional[datetime] = Field(None, description="Extract the date and time when the report was signed or verified. Look for timestamps near the signature section. Convert to ISO datetime format.")
+    signed_at: Optional[dt.datetime] = Field(None, description="Extract the date and time when the report was signed or verified. Look for timestamps near the signature section. Convert to ISO datetime format.")
 
 
 class ThyrocareReport(BaseModel):
@@ -108,7 +108,7 @@ class ThyrocareReport(BaseModel):
 
 class SecondMedicReportInfo(BaseModel):
     """SecondMedic comprehensive report information"""
-    date: Optional[date] = Field(None, description="Extract the report date from SecondMedic diagnostic reports. Look for 'Date', 'Report Date', or timestamps. Convert to YYYY-MM-DD format.")
+    report_date: Optional[dt.date] = Field(None, description="Extract the report date from SecondMedic diagnostic reports. Look for 'Date', 'Report Date', or timestamps. Convert to YYYY-MM-DD format.")
     institution: Optional[str] = Field("", description="Extract the medical institution or hospital name (e.g., 'City Medical Center', 'Apollo Hospital'). Usually at the top of the report.")
     case_ids: Optional[dict[str, Any]] = Field(None, description="Extract any case IDs, accession numbers, or reference numbers. Create a dictionary with descriptive keys (e.g., {'radiology_id': 'RAD2024001', 'ultrasound_id': 'US2024045'}).")
 

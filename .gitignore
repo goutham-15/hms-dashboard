@@ -222,3 +222,4 @@ __marimo__/
 config.yaml
 test.py
 .DS_Store
+model_list.py
