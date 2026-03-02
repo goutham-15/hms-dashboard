@@ -1,0 +1,295 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "MedicalReportData",
+  "type": "object",
+  "required": ["staff_details", "thyrocare", "second_medic", "inference"],
+  "properties": {
+    "staff_details": {
+      "type": "object",
+      "properties": {
+        "staff_id": {
+          "type": "string",
+          "default": ""
+        },
+        "name": {
+          "type": "string",
+          "default": ""
+        },
+        "designation": {
+          "type": "string",
+          "default": ""
+        },
+        "department": {
+          "type": "string",
+          "default": ""
+        },
+        "contact": {
+          "type": "string",
+          "default": ""
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "default": ""
+        }
+      }
+    },
+    "thyrocare": {
+      "type": "object",
+      "properties": {
+        "report_info": {
+          "type": "object",
+          "required": ["report_id", "date", "lab_name"],
+          "properties": {
+            "report_id": {
+              "type": "string"
+            },
+            "report_version": {
+              "type": "string",
+              "default": ""
+            },
+            "date": {
+              "type": "string",
+              "format": "date"
+            },
+            "generated_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "lab_name": {
+              "type": "string"
+            },
+            "lab_code": {
+              "type": "string",
+              "default": ""
+            },
+            "status": {
+              "type": "string",
+              "enum": ["PRELIMINARY", "FINAL", "CORRECTED"]
+            },
+            "source_system": {
+              "type": "string",
+              "default": ""
+            }
+          }
+        },
+        "patient_details": {
+          "type": "object",
+          "required": ["name", "age", "gender"],
+          "properties": {
+            "patient_id": {
+              "type": "string",
+              "default": ""
+            },
+            "name": {
+              "type": "string"
+            },
+            "age": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 130
+            },
+            "gender": {
+              "type": "string",
+              "enum": ["MALE", "FEMALE", "OTHER"]
+            },
+            "referred_by": {
+              "type": "string",
+              "default": ""
+            }
+          }
+        },
+        "test_results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["test_name", "value", "units"],
+            "properties": {
+              "panel_name": {
+                "type": "string",
+                "default": ""
+              },
+              "category": {
+                "type": "string",
+                "default": ""
+              },
+              "test_code": {
+                "type": "string",
+                "default": ""
+              },
+              "test_name": {
+                "type": "string"
+              },
+              "value": {
+                "type": "number"
+              },
+              "units": {
+                "type": "string"
+              },
+              "reference_range": {
+                "type": "object",
+                "properties": {
+                  "low": {
+                    "type": "number"
+                  },
+                  "high": {
+                    "type": "number"
+                  },
+                  "text": {
+                    "type": "string",
+                    "default": ""
+                  }
+                }
+              },
+              "result_flag": {
+                "type": "string",
+                "enum": ["LOW", "NORMAL", "HIGH", "CRITICAL"]
+              },
+              "interpretation": {
+                "type": "string",
+                "default": ""
+              }
+            }
+          }
+        },
+        "summary": {
+          "type": "object",
+          "properties": {
+            "total_tests_ready": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "out_of_range_count": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            }
+          }
+        },
+        "doctor_verification": {
+          "type": "object",
+          "properties": {
+            "doctor_name": {
+              "type": "string",
+              "default": ""
+            },
+            "designation": {
+              "type": "string",
+              "default": ""
+            },
+            "license_number": {
+              "type": "string",
+              "default": ""
+            },
+            "signed_at": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        }
+      }
+    },
+    "second_medic": {
+      "type": "object",
+      "properties": {
+        "report_info": {
+          "type": "object",
+          "properties": {
+            "date": {
+              "type": "string",
+              "format": "date"
+            },
+            "institution": {
+              "type": "string",
+              "default": ""
+            },
+            "case_ids": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "patient_details": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "default": ""
+            },
+            "age": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 130
+            },
+            "gender": {
+              "type": "string",
+              "enum": ["MALE", "FEMALE", "OTHER"]
+            }
+          }
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["test_category", "test_name"],
+            "properties": {
+              "test_category": {
+                "type": "string"
+              },
+              "test_name": {
+                "type": "string"
+              },
+              "findings": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                ]
+              },
+              "metrics": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "parameter": {
+                      "type": "string",
+                      "default": ""
+                    },
+                    "value": {
+                      "type": "number"
+                    },
+                    "units": {
+                      "type": "string",
+                      "default": ""
+                    }
+                  }
+                }
+              },
+              "impression": {
+                "type": "string",
+                "default": ""
+              }
+            }
+          }
+        },
+        "summary_findings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "inference": {
+      "type": "string",
+      "default": ""
+    }
+  }
+}
