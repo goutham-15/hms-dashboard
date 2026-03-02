@@ -9,7 +9,6 @@ except Exception:  # pragma: no cover
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
-from chromadb.utils import embedding_functions
 from langchain_core.documents import Document
 
 
@@ -24,12 +23,10 @@ class ChromaVectorDB:
         persist_directory: str | Path | None = None,
         collection_name: str,
         embedding_function: Any | None = None,
-        embedding_model: str = "all-MiniLM-L6-v2",
     ):
         self.persist_directory = str(persist_directory) if persist_directory else ""
         self.collection_name = collection_name
         self.embedding_function = embedding_function
-        self.embedding_model = embedding_model
 
         if self.persist_directory:
             self.client = chromadb.PersistentClient(
@@ -41,9 +38,8 @@ class ChromaVectorDB:
                 settings=ChromaSettings(anonymized_telemetry=False, is_persistent=False),
             )
 
-        ef = self.embedding_function or embedding_functions.SentenceTransformerEmbeddingFunction(
-            model_name=self.embedding_model
-        )
+        # Avoid model downloads by default. Callers can provide a real embedding function if desired.
+        ef = self.embedding_function or _hash_embedding_function
         self.collection = self.client.get_or_create_collection(
             name=self.collection_name,
             embedding_function=ef,
@@ -89,6 +85,31 @@ class ChromaVectorDB:
             self.collection.add(documents=texts, metadatas=metadatas, ids=ids)
         return len(texts)
 
+    def add_chunks(
+        self,
+        *,
+        source_id: str,
+        chunks: Iterable[tuple[str, dict[str, Any]]],
+    ) -> int:
+        texts: list[str] = []
+        metadatas: list[dict[str, Any]] = []
+        ids: list[str] = []
+
+        for idx, (text, meta) in enumerate(chunks):
+            cleaned = (text or "").strip()
+            if not cleaned:
+                continue
+            metadata = {"source_id": source_id, **(meta or {})}
+            page = metadata.get("page", 0) or 0
+            chunk_index = metadata.get("chunk_index", idx)
+            ids.append(f"{source_id}:{page}:{chunk_index}:{idx}")
+            texts.append(cleaned)
+            metadatas.append(metadata)
+
+        if texts:
+            self.collection.add(documents=texts, metadatas=metadatas, ids=ids)
+        return len(texts)
+
     def search(
         self,
         query: str,
@@ -122,3 +143,22 @@ class ChromaVectorDB:
             return 0
         self.collection.delete(ids=ids)
         return len(ids)
+
+
+def _hash_embedding_function(texts: list[str]) -> list[list[float]]:
+    """
+    Deterministic local embedding to avoid model downloads.
+
+    Not semantically strong, but sufficient for lightweight retrieval without network access.
+    """
+    import hashlib
+
+    dims = 256
+    out: list[list[float]] = []
+    for t in texts:
+        vec = [0.0] * dims
+        digest = hashlib.sha256((t or "").encode("utf-8", errors="ignore")).digest()
+        for i, byte in enumerate(digest):
+            vec[i % dims] += (byte / 255.0) * 2.0 - 1.0
+        out.append(vec)
+    return out
