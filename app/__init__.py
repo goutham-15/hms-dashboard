@@ -1,0 +1,2 @@
+"""HMS Dashboard application package."""
+
