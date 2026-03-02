@@ -1,4 +1,6 @@
 from pathlib import Path
+import os
+import threading
 from typing import Any, Iterable, Optional
 
 try:
@@ -6,9 +8,6 @@ try:
 except Exception:  # pragma: no cover
     from langchain.text_splitter import RecursiveCharacterTextSplitter  # type: ignore
 
-
-import chromadb
-from chromadb.config import Settings as ChromaSettings
 from langchain_core.documents import Document
 
 
@@ -24,6 +23,14 @@ class ChromaVectorDB:
         collection_name: str,
         embedding_function: Any | None = None,
     ):
+        try:
+            import chromadb  # type: ignore
+            from chromadb.config import Settings as ChromaSettings  # type: ignore
+        except ModuleNotFoundError as exc:  # pragma: no cover
+            raise ModuleNotFoundError(
+                "chromadb is required to use ChromaVectorDB. Install `chromadb` to enable vector storage."
+            ) from exc
+
         self.persist_directory = str(persist_directory) if persist_directory else ""
         self.collection_name = collection_name
         self.embedding_function = embedding_function
@@ -38,8 +45,7 @@ class ChromaVectorDB:
                 settings=ChromaSettings(anonymized_telemetry=False, is_persistent=False),
             )
 
-        # Avoid model downloads by default. Callers can provide a real embedding function if desired.
-        ef = self.embedding_function or _hash_embedding_function
+        ef = self.embedding_function or get_default_embedding_function()
         self.collection = self.client.get_or_create_collection(
             name=self.collection_name,
             embedding_function=ef,
@@ -162,3 +168,67 @@ def _hash_embedding_function(texts: list[str]) -> list[list[float]]:
             vec[i % dims] += (byte / 255.0) * 2.0 - 1.0
         out.append(vec)
     return out
+
+
+_ST_MODELS: dict[str, Any] = {}
+_ST_LOCK = threading.Lock()
+
+
+def _get_sentence_transformer(model_name: str):
+    """
+    Load and cache a SentenceTransformer model once per process.
+    """
+    name = (model_name or "").strip() or "all-MiniLM-L6-v2"
+    with _ST_LOCK:
+        cached = _ST_MODELS.get(name)
+        if cached is not None:
+            return cached
+
+        try:
+            from sentence_transformers import SentenceTransformer  # type: ignore
+        except ModuleNotFoundError as exc:  # pragma: no cover
+            raise ModuleNotFoundError(
+                "sentence-transformers is required for SentenceTransformer embeddings. "
+                "Install `sentence-transformers` or use the default hash embedding."
+            ) from exc
+
+        try:
+            model = SentenceTransformer(name)
+        except Exception as exc:  # pragma: no cover
+            raise RuntimeError(
+                f"Failed to load SentenceTransformer model '{name}'. "
+                "If running offline, pre-download/cached models are required."
+            ) from exc
+
+        _ST_MODELS[name] = model
+        return model
+
+
+def sentence_transformer_embedding_function(texts: list[str], *, model_name: str) -> list[list[float]]:
+    """
+    Chroma-compatible embedding function using a cached SentenceTransformer model.
+    """
+    model = _get_sentence_transformer(model_name)
+    cleaned = [(t or "") for t in texts]
+    vectors = model.encode(cleaned, normalize_embeddings=True)
+    return [list(map(float, row)) for row in vectors.tolist()]
+
+
+def get_default_embedding_function():
+    """
+    Returns a process-wide embedding function.
+
+    Defaults to deterministic hash embeddings. Set:
+    - `HMS_VECTOR_EMBEDDING_BACKEND=sentence_transformer`
+    - `HMS_VECTOR_EMBEDDING_MODEL=<model-name>` (optional)
+    """
+    backend = (os.environ.get("HMS_VECTOR_EMBEDDING_BACKEND") or "hash").strip().lower()
+    if backend in {"sentence_transformer", "sentence-transformer", "st"}:
+        model_name = os.environ.get("HMS_VECTOR_EMBEDDING_MODEL") or "all-MiniLM-L6-v2"
+
+        def _ef(texts: list[str]) -> list[list[float]]:
+            return sentence_transformer_embedding_function(texts, model_name=model_name)
+
+        return _ef
+
+    return _hash_embedding_function

@@ -36,6 +36,12 @@ class AWSConfig(BaseSettings):
     bedrock: BedrockConfig = Field(default_factory=BedrockConfig)
 
 
+class VectorDBConfig(BaseSettings):
+    persist_directory: str = Field(default="vector_store")
+    collection_name: str = Field(default="hms_single_file")
+    flush_after_extraction: bool = Field(default=False)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         yaml_file=Path(__file__).parent.parent.parent / "config.yaml",
@@ -45,6 +51,7 @@ class Settings(BaseSettings):
     api: APIConfig = Field(default_factory=APIConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     aws: AWSConfig = Field(default_factory=AWSConfig)
+    vector_db: VectorDBConfig = Field(default_factory=VectorDBConfig)
 
     @classmethod
     def settings_customise_sources(

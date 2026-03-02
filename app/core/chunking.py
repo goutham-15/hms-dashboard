@@ -74,6 +74,8 @@ class TaggedRecursiveTextChunker:
     ) -> Iterator[tuple[str, dict[str, Any]]]:
         """
         Yield (chunk_text, metadata) with report_type carried forward until a new marker appears.
+
+        Production behavior: treat each page as a single chunk (no intra-page splitting).
         """
         current_tag = (initial_tag or "").strip().lower() or None
         for page_number, page_text in pages:
@@ -82,11 +84,13 @@ class TaggedRecursiveTextChunker:
                 current_tag = detected
 
             tag = current_tag or self.unknown_tag
-            chunks = [c.strip() for c in self.splitter.split_text(page_text or "") if c.strip()]
-            for idx, chunk in enumerate(chunks):
-                yield chunk, {
-                    "page": page_number,
-                    "chunk_index": idx,
-                    "report_type": tag,
-                    **(extra_metadata or {}),
-                }
+            cleaned = (page_text or "").strip()
+            if not cleaned:
+                continue
+
+            yield cleaned, {
+                "page": page_number,
+                "chunk_index": 0,
+                "report_type": tag,
+                **(extra_metadata or {}),
+            }
