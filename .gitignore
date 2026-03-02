@@ -224,3 +224,6 @@ test.py
 .DS_Store
 model_list.py
 logs/
+
+# Generated sample OCR outputs
+tests/_outputs/
