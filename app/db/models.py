@@ -1,91 +1,55 @@
 from sqlalchemy import Column, Integer, String, DateTime, Date, JSON, Text, Enum as SQLEnum
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime
 import enum
 from app.utils.logger import get_logger
 
-
 logger = get_logger(name="db_models")
 Base = declarative_base()
 
 
-class GenderEnum(str, enum.Enum):
-    MALE = "MALE"
-    FEMALE = "FEMALE"
-    OTHER = "OTHER"
+class RiskStatusEnum(str, enum.Enum):
+    CRITICAL = "Critical"
+    HIGH_RISK = "High Risk"
+    MODERATE_RISK = "Moderate Risk"
+    HEALTHY = "Healthy"
 
 
-class ReportStatusEnum(str, enum.Enum):
-    PRELIMINARY = "PRELIMINARY"
-    FINAL = "FINAL"
-    CORRECTED = "CORRECTED"
+class FacultyHealthRecord(Base):
+    """
+    SQLAlchemy model for faculty health records, aligned with hms_health_records table.
+    """
+    __tablename__ = "hms_health_records"
 
-
-class MedicalReport(Base):
-    __tablename__ = "medical_reports"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
+    id = Column(String(50), primary_key=True)
     
-    # Staff Details
-    staff_id = Column(String(100), default="")
-    staff_name = Column(String(255), default="")
-    staff_designation = Column(String(255), default="")
-    staff_department = Column(String(255), default="")
-    staff_contact = Column(String(50), default="")
-    staff_email = Column(String(255), default="")
+    # 1. Staff Details
+    employee_id = Column(String(50), nullable=False)
+    year = Column(Integer, nullable=False, index=True)
+    name = Column(String(100), nullable=False)
+    age = Column(Integer, nullable=False)
+    gender = Column(String(10), nullable=False)
+    department = Column(String(50), nullable=False, index=True)
+    screening_date = Column(Date, nullable=False)
     
-    # Thyrocare Report Info
-    thyrocare_report_id = Column(String(255), default="")
-    thyrocare_report_version = Column(String(50), default="")
-    thyrocare_date = Column(Date, nullable=True)
-    thyrocare_generated_at = Column(DateTime, nullable=True)
-    thyrocare_lab_name = Column(String(255), default="")
-    thyrocare_lab_code = Column(String(100), default="")
-    thyrocare_status = Column(SQLEnum(ReportStatusEnum), nullable=True)
-    thyrocare_source_system = Column(String(100), default="")
+    # 2. Dashboard Analytics
+    health_score = Column(Integer, default=0)
+    status = Column(SQLEnum(RiskStatusEnum, name="risk_status_enum"), nullable=False, index=True)
+    active_flags = Column(JSONB, default=list) # Array of strings
     
-    # Thyrocare Patient Details
-    thyrocare_patient_id = Column(String(255), default="")
-    thyrocare_patient_name = Column(String(255), default="")
-    thyrocare_patient_age = Column(Integer, nullable=True)
-    thyrocare_patient_gender = Column(SQLEnum(GenderEnum), nullable=True)
-    thyrocare_referred_by = Column(String(255), default="")
+    # 3. Thyrocare Data
+    thyrocare_results = Column(JSONB, default=dict)
     
-    # Thyrocare Test Results (array stored as JSON)
-    thyrocare_test_results = Column(JSON, default=list)
+    # 4. SecondMedic Data
+    secondmedic_results = Column(JSONB, default=dict)
     
-    # Thyrocare Summary
-    thyrocare_total_tests_ready = Column(Integer, default=0)
-    thyrocare_out_of_range_count = Column(Integer, default=0)
+    # 5. Report Content
+    inference = Column(Text, nullable=True)
+    suggestion = Column(JSONB, default=list) # Array of strings
     
-    # Thyrocare Doctor Verification
-    thyrocare_doctor_name = Column(String(255), default="")
-    thyrocare_doctor_designation = Column(String(255), default="")
-    thyrocare_doctor_license_number = Column(String(100), default="")
-    thyrocare_doctor_signed_at = Column(DateTime, nullable=True)
-    
-    # SecondMedic Report Info
-    secondmedic_date = Column(Date, nullable=True)
-    secondmedic_institution = Column(String(255), default="")
-    secondmedic_case_ids = Column(JSON, nullable=True)
-    
-    # SecondMedic Patient Details
-    secondmedic_patient_name = Column(String(255), default="")
-    secondmedic_patient_age = Column(Integer, nullable=True)
-    secondmedic_patient_gender = Column(SQLEnum(GenderEnum), nullable=True)
-    
-    # SecondMedic Diagnostics (array stored as JSON)
-    secondmedic_diagnostics = Column(JSON, default=list)
-    
-    # SecondMedic Summary Findings
-    secondmedic_summary_findings = Column(JSON, nullable=True)
-    
-    # Overall inference
-    inference = Column(Text, nullable=False, default="")
-    
-    # Year tracking
-    report_year = Column(Integer, nullable=True, index=True)
-    
-    # Audit fields
+    # 6. System Metadata
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    def __repr__(self):
+        return f"<FacultyHealthRecord(employee_id='{self.employee_id}', year={self.year}, status='{self.status}')>"
