@@ -4,7 +4,7 @@ from langchain_aws.chat_models import ChatBedrock
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel
 
-from app.core.llm.prompts import staff_details, thyrocare_details, second_medic_details
+from app.core.llm.prompts import staff_details, thyrocare_details, second_medic_details, health_inference
 from app.core.vector_db import VectorDB
 from app.models.medical_report import StaffDetails, Thyrocare, SecondMedic, FacultyHealthProfile
 
@@ -27,10 +27,13 @@ class GraphState(TypedDict):
     Represents the state of our graph.
     """
     full_text: str
+    source_id: Optional[str]
     report_type_chunks: Dict[str, List[str]]
+    staff_context: Optional[str]
     staff_details: Optional[StaffDetails]
     thyrocare_details: Optional[Thyrocare]
     secondmedic_details: Optional[SecondMedic]
+    health_inference: Optional[Dict]
     final_summary: Optional[FacultyHealthProfile]
 
 
@@ -48,72 +51,119 @@ class MedicalReportExtractor:
         graph.add_node("extract_staff", self.extract_staff_details)
         graph.add_node("extract_thyrocare", self.extract_thyrocare_details)
         graph.add_node("extract_secondmedic", self.extract_secondmedic_details)
+        graph.add_node("generate_inference", self.generate_health_inference)
         graph.add_node("combine_results", self.combine_results)
 
         graph.set_entry_point("retrieve_chunks")
         graph.add_edge("retrieve_chunks", "extract_staff")
-        graph.add_edge("extract_staff", "extract_thyrocare")
-        graph.add_edge("extract_thyrocare", "extract_secondmedic")
-        graph.add_edge("extract_secondmedic", "combine_results")
+        graph.add_edge("retrieve_chunks", "extract_thyrocare")
+        graph.add_edge("retrieve_chunks", "extract_secondmedic")
+        
+        graph.add_edge("extract_staff", "generate_inference")
+        graph.add_edge("extract_thyrocare", "generate_inference")
+        graph.add_edge("extract_secondmedic", "generate_inference")
+        
+        graph.add_edge("generate_inference", "combine_results")
         graph.add_edge("combine_results", END)
 
         return graph.compile()
 
-    def extract(self, full_text: str) -> FacultyHealthProfile:
-        """
-        Runs the extraction graph.
-        """
-        inputs = {"full_text": full_text, "report_type_chunks": {}}
+    def extract(self, full_text: str, *, source_id: Optional[str] = None) -> FacultyHealthProfile:
+        inputs = {"full_text": full_text, "source_id": source_id, "report_type_chunks": {}, "staff_context": None}
         result = self.graph.invoke(inputs)
         return result.get("final_summary", FacultyHealthProfile())
 
-    def retrieve_filtered_chunks(self, state: GraphState) -> GraphState:
+    def retrieve_filtered_chunks(self, state: GraphState) -> Dict:
         """Retrieves document chunks filtered by report type."""
-        thyrocare_docs = self.vector_db.similarity_search(query="thyrocare", filter={"report_type": "thyrocare"}, k=20)
-        secondmedic_docs = self.vector_db.similarity_search(query="secondmedic", filter={"report_type": "second_medic"}, k=20)
+        source_id = state.get("source_id")
 
-        state["report_type_chunks"] = {
-            "thyrocare": [doc.page_content for doc in thyrocare_docs],
-            "second_medic": [doc.page_content for doc in secondmedic_docs],
+        def _get_docs(where: dict) -> list[str]:
+            got = self.vector_db.get(where=where, include=["documents", "metadatas"])
+            docs = got.get("documents") or []
+            metas = got.get("metadatas") or []
+            rows: list[tuple[str, dict]] = []
+            for d, m in zip(docs, metas):
+                if (d or "").strip():
+                    rows.append((d or "", m or {}))
+            rows.sort(
+                key=lambda r: (
+                    int(r[1].get("page_in_report", 0) or 0),
+                    int(r[1].get("page", 0) or 0),
+                )
+            )
+            return [d for d, _ in rows]
+
+        base: dict = {}
+        if source_id:
+            base["source_id"] = source_id
+
+        thy_docs = _get_docs({**base, "report_type": "thyrocare"})
+        second_docs = _get_docs({**base, "report_type": "second_medic"})
+
+        staff_chunks: list[str] = []
+        for rt in ("thyrocare", "second_medic"):
+            first = _get_docs({**base, "report_type": rt, "report_start": True})
+            if not first:
+                first = _get_docs({**base, "report_type": rt, "page_in_report": 1})
+            if first:
+                staff_chunks.append(first[0])
+        
+        return {
+            "report_type_chunks": {"thyrocare": thy_docs, "second_medic": second_docs},
+            "staff_context": _join_context(staff_chunks, max_chars=6000)
         }
-        return state
 
-    def extract_staff_details(self, state: GraphState) -> GraphState:
-        """Extracts staff details from the full text."""
+    def extract_staff_details(self, state: GraphState) -> Dict:
+        """Extracts staff details from the first pages of both reports (fallback: full text)."""
         chain = staff_details.PROMPT | self.llm | staff_details.parser
-        extracted = chain.invoke({"context": state["full_text"]})
-        state["staff_details"] = extracted
-        return state
+        context = (state.get("staff_context") or "").strip() or state["full_text"]
+        extracted = chain.invoke({"context": context})
+        return {"staff_details": extracted}
 
-    def extract_thyrocare_details(self, state: GraphState) -> GraphState:
+    def extract_thyrocare_details(self, state: GraphState) -> Dict:
         """Extracts Thyrocare details from filtered chunks."""
         context = _join_context(state["report_type_chunks"].get("thyrocare", []))
         if not context:
-            state["thyrocare_details"] = Thyrocare()
-            return state
+            return {"thyrocare_details": Thyrocare()}
 
         chain = thyrocare_details.PROMPT | self.llm | thyrocare_details.parser
         extracted = chain.invoke({"context": context})
-        state["thyrocare_details"] = extracted
-        return state
+        return {"thyrocare_details": extracted}
 
-    def extract_secondmedic_details(self, state: GraphState) -> GraphState:
+    def extract_secondmedic_details(self, state: GraphState) -> Dict:
         """Extracts SecondMedic details from filtered chunks."""
         context = _join_context(state["report_type_chunks"].get("second_medic", []))
         if not context:
-            state["secondmedic_details"] = SecondMedic()
-            return state
+            return {"secondmedic_details": SecondMedic()}
 
         chain = second_medic_details.PROMPT | self.llm | second_medic_details.parser
         extracted = chain.invoke({"context": context})
-        state["secondmedic_details"] = extracted
-        return state
+        return {"secondmedic_details": extracted}
 
-    def combine_results(self, state: GraphState) -> GraphState:
+    def generate_health_inference(self, state: GraphState) -> Dict:
+        """Generates a consolidated medical summary using the extracted data."""
+        thyrocare = state.get("thyrocare_details") or Thyrocare()
+        secondmedic = state.get("secondmedic_details") or SecondMedic()
+        staff = state.get("staff_details") or StaffDetails()
+
+        chain = health_inference.PROMPT | self.llm | health_inference.parser
+        result = chain.invoke({
+            "thyrocare_json": thyrocare.model_dump_json(),
+            "secondmedic_json": secondmedic.model_dump_json(),
+            "staff_details_json": staff.model_dump_json()
+        })
+        return {"health_inference": result}
+
+    def combine_results(self, state: GraphState) -> Dict:
         """Combines all extracted data into a final profile."""
-        state["final_summary"] = FacultyHealthProfile(
+        inf = state.get("health_inference") or {}
+        final_summary = FacultyHealthProfile(
             staff_details=state.get("staff_details") or StaffDetails(),
             thyrocare=state.get("thyrocare_details") or Thyrocare(),
             secondmedic=state.get("secondmedic_details") or SecondMedic(),
+            inference=inf.get("inference", ""),
+            active_flags=inf.get("active_flags", []),
+            status=inf.get("status", ""),
+            suggestion=inf.get("suggestion", []),
         )
-        return state
+        return {"final_summary": final_summary}

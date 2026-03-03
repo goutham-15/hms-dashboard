@@ -1,14 +1,25 @@
 from pathlib import Path
-import os
-import threading
 from typing import Any, Iterable, Optional
-
-try:
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
-except Exception:  # pragma: no cover
-    from langchain.text_splitter import RecursiveCharacterTextSplitter  # type: ignore
-
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
+from langchain_huggingface import HuggingFaceEmbeddings
+
+
+EMBEDDING_FUNCTION = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+
+
+class _ChromaEmbeddingFunctionAdapter:
+    def __init__(self, embeddings: HuggingFaceEmbeddings):
+        self._embeddings = embeddings
+
+    def __call__(self, input: list[str]) -> list[list[float]]:
+        cleaned = [(t or "") for t in input]
+        vectors = self._embeddings.embed_documents(cleaned)
+        return [list(map(float, v)) for v in vectors]
+
+    def name(self) -> str:
+        model_name = getattr(self._embeddings, "model_name", None) or "all-MiniLM-L6-v2"
+        return f"huggingface:{model_name}"
 
 
 class ChromaVectorDB:
@@ -20,8 +31,7 @@ class ChromaVectorDB:
         self,
         *,
         persist_directory: str | Path | None = None,
-        collection_name: str,
-        embedding_function: Any | None = None,
+        collection_name: str
     ):
         try:
             import chromadb  # type: ignore
@@ -33,7 +43,6 @@ class ChromaVectorDB:
 
         self.persist_directory = str(persist_directory) if persist_directory else ""
         self.collection_name = collection_name
-        self.embedding_function = embedding_function
 
         if self.persist_directory:
             self.client = chromadb.PersistentClient(
@@ -45,10 +54,10 @@ class ChromaVectorDB:
                 settings=ChromaSettings(anonymized_telemetry=False, is_persistent=False),
             )
 
-        ef = self.embedding_function or get_default_embedding_function()
+
         self.collection = self.client.get_or_create_collection(
             name=self.collection_name,
-            embedding_function=ef,
+            embedding_function=_ChromaEmbeddingFunctionAdapter(EMBEDDING_FUNCTION),
         )
 
     def add_pages(
@@ -116,6 +125,21 @@ class ChromaVectorDB:
             self.collection.add(documents=texts, metadatas=metadatas, ids=ids)
         return len(texts)
 
+    def _normalize_where(self, where: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+        if not where or len(where) <= 1:
+            return where
+        # If it already starts with an operator, it might be fine, but if it has multiple keys, ChromaDB needs a single top-level operator
+        if all(str(k).startswith("$") for k in where.keys()):
+            return where
+        return {"$and": [{k: v} for k, v in where.items()]}
+
+    def get(self, where: Optional[dict[str, Any]] = None, include: Optional[list[str]] = None):
+        """
+        Thin wrapper around collection.get with filter normalization.
+        """
+        where = self._normalize_where(where)
+        return self.collection.get(where=where, include=include or [])
+
     def search(
         self,
         query: str,
@@ -126,6 +150,7 @@ class ChromaVectorDB:
         """
         Returns LangChain `Document` objects.
         """
+        where = self._normalize_where(where)
         res = self.collection.query(
             query_texts=[query],
             n_results=k,
@@ -139,96 +164,34 @@ class ChromaVectorDB:
             out.append(Document(page_content=text or "", metadata=meta or {}))
         return out
 
-    def delete_source(self, *, source_id: str) -> int:
+    def similarity_search(
+        self,
+        query: str,
+        *,
+        k: int = 6,
+        filter: Optional[dict[str, Any]] = None,
+    ):
         """
-        Delete all vectors for a specific document (source_id).
+        Alias for search to match LangChain-like interface.
         """
-        got = self.collection.get(where={"source_id": source_id}, include=[])
-        ids = got.get("ids") or []
-        if not ids:
-            return 0
-        self.collection.delete(ids=ids)
+        return self.search(query, k=k, where=filter)
+
+    def delete_source(self, source_id: str) -> int:
+        """
+        Delete all documents and metadata associated with a source_id.
+        """
+        where = self._normalize_where({"source_id": source_id})
+        res = self.collection.get(where=where, include=[])
+        ids = res.get("ids") or []
+        if ids:
+            self.collection.delete(ids=ids)
         return len(ids)
 
-
-def _hash_embedding_function(texts: list[str]) -> list[list[float]]:
-    """
-    Deterministic local embedding to avoid model downloads.
-
-    Not semantically strong, but sufficient for lightweight retrieval without network access.
-    """
-    import hashlib
-
-    dims = 256
-    out: list[list[float]] = []
-    for t in texts:
-        vec = [0.0] * dims
-        digest = hashlib.sha256((t or "").encode("utf-8", errors="ignore")).digest()
-        for i, byte in enumerate(digest):
-            vec[i % dims] += (byte / 255.0) * 2.0 - 1.0
-        out.append(vec)
-    return out
+    def add_documents(self, chunks: Iterable[tuple[str, dict[str, Any]]], source_id: str = "") -> int:
+        """
+        Alias for add_chunks to match expected API in main.py.
+        """
+        return self.add_chunks(source_id=source_id, chunks=chunks)
 
 
-_ST_MODELS: dict[str, Any] = {}
-_ST_LOCK = threading.Lock()
-
-
-def _get_sentence_transformer(model_name: str):
-    """
-    Load and cache a SentenceTransformer model once per process.
-    """
-    name = (model_name or "").strip() or "all-MiniLM-L6-v2"
-    with _ST_LOCK:
-        cached = _ST_MODELS.get(name)
-        if cached is not None:
-            return cached
-
-        try:
-            from sentence_transformers import SentenceTransformer  # type: ignore
-        except ModuleNotFoundError as exc:  # pragma: no cover
-            raise ModuleNotFoundError(
-                "sentence-transformers is required for SentenceTransformer embeddings. "
-                "Install `sentence-transformers` or use the default hash embedding."
-            ) from exc
-
-        try:
-            model = SentenceTransformer(name)
-        except Exception as exc:  # pragma: no cover
-            raise RuntimeError(
-                f"Failed to load SentenceTransformer model '{name}'. "
-                "If running offline, pre-download/cached models are required."
-            ) from exc
-
-        _ST_MODELS[name] = model
-        return model
-
-
-def sentence_transformer_embedding_function(texts: list[str], *, model_name: str) -> list[list[float]]:
-    """
-    Chroma-compatible embedding function using a cached SentenceTransformer model.
-    """
-    model = _get_sentence_transformer(model_name)
-    cleaned = [(t or "") for t in texts]
-    vectors = model.encode(cleaned, normalize_embeddings=True)
-    return [list(map(float, row)) for row in vectors.tolist()]
-
-
-def get_default_embedding_function():
-    """
-    Returns a process-wide embedding function.
-
-    Defaults to deterministic hash embeddings. Set:
-    - `HMS_VECTOR_EMBEDDING_BACKEND=sentence_transformer`
-    - `HMS_VECTOR_EMBEDDING_MODEL=<model-name>` (optional)
-    """
-    backend = (os.environ.get("HMS_VECTOR_EMBEDDING_BACKEND") or "hash").strip().lower()
-    if backend in {"sentence_transformer", "sentence-transformer", "st"}:
-        model_name = os.environ.get("HMS_VECTOR_EMBEDDING_MODEL") or "all-MiniLM-L6-v2"
-
-        def _ef(texts: list[str]) -> list[list[float]]:
-            return sentence_transformer_embedding_function(texts, model_name=model_name)
-
-        return _ef
-
-    return _hash_embedding_function
+VectorDB = ChromaVectorDB

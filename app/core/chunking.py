@@ -78,12 +78,26 @@ class TaggedRecursiveTextChunker:
         Production behavior: treat each page as a single chunk (no intra-page splitting).
         """
         current_tag = (initial_tag or "").strip().lower() or None
+        current_start_page: Optional[int] = None
+        page_in_report = 0
         for page_number, page_text in pages:
             detected = self.detect_report_type(page_text)
             if detected:
                 current_tag = detected
 
             tag = current_tag or self.unknown_tag
+            report_start = False
+            if current_start_page is None:
+                current_start_page = page_number
+                report_start = True
+                page_in_report = 1
+            elif detected:
+                current_start_page = page_number
+                report_start = True
+                page_in_report = 1
+            else:
+                page_in_report += 1
+
             cleaned = (page_text or "").strip()
             if not cleaned:
                 continue
@@ -92,5 +106,8 @@ class TaggedRecursiveTextChunker:
                 "page": page_number,
                 "chunk_index": 0,
                 "report_type": tag,
+                "report_start": report_start,
+                "page_in_report": page_in_report,
+                "report_start_page": current_start_page,
                 **(extra_metadata or {}),
             }

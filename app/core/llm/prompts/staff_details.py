@@ -1,5 +1,5 @@
-from langchain.output_parsers import PydanticOutputParser
-from langchain.prompts import PromptTemplate
+from langchain_core.output_parsers import PydanticOutputParser
+from langchain_core.prompts import PromptTemplate
 from app.models.medical_report import StaffDetails
 
 
@@ -15,6 +15,11 @@ Context:
 Please extract the information and format it according to the following schema.
 Make sure to follow the data types and constraints exactly.
 If a field is not available in the context, use the default value or an empty string.
+
+CRITICAL: Sometimes the employee ID and the name appear concatenated together in the source text (e.g., "[ID] [Name]"). 
+You MUST separate them: 
+- `employee_id` should contain ONLY the unique alphanumeric identifier.
+- `name` should contain ONLY the staff member's full name, excluding any prefixed or suffixed IDs.
 
 Format Instructions:
 {format_instructions}
