@@ -227,3 +227,6 @@ logs/
 
 # Generated sample OCR outputs
 tests/_outputs/
+
+# Persistent ChromaDB (vectors)
+vector_store/
