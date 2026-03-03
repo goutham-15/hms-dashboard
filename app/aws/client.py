@@ -56,6 +56,13 @@ class AWSClient:
             region_name=self.region,
         )
 
+        try:
+            sts = self._session.client("sts", region_name=self.region)
+            identity = sts.get_caller_identity()
+            logger.info("AWS Identity: Account=%s ARN=%s", identity.get("Account"), identity.get("Arn"))
+        except Exception as e:
+            logger.warning("Could not retrieve AWS identity: %s", e)
+
     def bedrock_runtime(self) -> Any:
         return self._bedrock_runtime
 
