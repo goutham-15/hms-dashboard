@@ -1,10 +1,14 @@
-from typing import Dict, Union, List, Literal
-from pydantic import BaseModel, Field
+from typing import Dict, Union, List, Literal, Optional
+from pydantic import BaseModel, Field, RootModel, field_validator
 
 
 # ---------- Shared Definitions ----------
 
 class TestResult(BaseModel):
+    name: str = Field(
+        "",
+        description="Name of the lab test (e.g., FBS, HbA1c, Cholesterol)."
+    )
     value: Union[float, int, str] = Field(
         "",
         description="Measured value of the lab test as reported (numeric or text exactly as in report)."
@@ -30,18 +34,8 @@ class TestResult(BaseModel):
     )
 
 
-class TestGroup(BaseModel):
-    """
-    Dynamic lab test group where keys are test names.
-    """
-    __root__: Dict[str, TestResult] = Field(
-        default_factory=dict,
-        description=(
-            "Dictionary of lab test names to results. "
-            "Use exact test names from the Thyrocare report "
-            "(e.g., 'HbA1c', 'LDL Cholesterol', 'Creatinine')."
-        )
-    )
+class TestGroup(RootModel[List[TestResult]]):
+    root: List[TestResult] = Field(default_factory=list)
 
 
 class ImagingResult(BaseModel):
@@ -60,11 +54,11 @@ class ImagingResult(BaseModel):
 class StaffDetails(BaseModel):
     employee_id: str = Field(
         "",
-        description="Unique employee or staff identification number."
+        description="Unique alphanumeric identifier for the staff member. Extract ONLY the ID part."
     )
     name: str = Field(
         "",
-        description="Full name of the faculty or staff member."
+        description="Full name of the faculty or staff member. Extract ONLY the name part, excluding any concatenated ID."
     )
     age: int = Field(
         18,
@@ -83,12 +77,19 @@ class StaffDetails(BaseModel):
         "",
         description="Date of health screening in YYYY-MM-DD format."
     )
-    overall_health_score: int = Field(
-        0,
+    overall_health_score: Optional[int] = Field(
+        None,
         ge=0,
         le=100,
         description="Overall computed health score if provided in the report or dashboard."
     )
+
+    @field_validator("employee_id", "name", "gender", "department", mode="after")
+    @classmethod
+    def uppercase_strings(cls, v: str) -> str:
+        if isinstance(v, str):
+            return v.upper()
+        return v
 
 
 class Thyrocare(BaseModel):
