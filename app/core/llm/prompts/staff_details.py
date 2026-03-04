@@ -16,10 +16,9 @@ Please extract the information and format it according to the following schema.
 Make sure to follow the data types and constraints exactly.
 If a field is not available in the context, use the default value or an empty string.
 
-CRITICAL: Sometimes the employee ID and the name appear concatenated together in the source text (e.g., "[ID] [Name]"). 
-You MUST separate them: 
-- `employee_id` should contain ONLY the unique alphanumeric identifier.
-- `name` should contain ONLY the staff member's full name, excluding any prefixed or suffixed IDs.
+CRITICAL: 
+1. Sometimes the employee ID and the name appear concatenated together in the source text (e.g., "[ID] [Name]"). Separate them.
+2. If the "Department" is not explicitly mentioned, try to infer it from the `employee_id` prefix or code if possible (e.g., "ME" or "MECH" for Mechanical, "IT" for Information Technology, "CS" for Computer Science).
 
 Format Instructions:
 {format_instructions}

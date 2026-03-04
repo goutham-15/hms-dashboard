@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sri Sai Ram Institution | Faculty Health Dashboard</title>
-    <link rel="stylesheet" href="{{ url_for('demo-static', path='/css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('demo-static', path='/css/style.css') }}?v=1.0.1">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 </head>
@@ -16,23 +16,10 @@
                 <div class="logo">SS</div>
                 <div class="institution-name">
                     <h1>Sri Sai Ram Institution</h1>
-                    <p>Faculty Health Dashboard</p>
                 </div>
             </div>
-            <nav class="nav-links">
-                <a href="#" class="active">Executive Summary</a>
-                <a href="#">Departments</a>
-                <a href="#">Disease Analytics</a>
-                <a href="#">Faculty Directory</a>
-                <a href="#">Flagged & Critical</a>
-                <a href="#">Mobility & Fitness</a>
-            </nav>
             <div class="user-profile">
                 <div class="notification-icon">
-                    <span id="headerBadge" class="badge">0</span>
-                </div>
-                <div class="date-display">
-                    22 Dec 2025
                 </div>
                 <div class="profile-avatar">HA</div>
                 <div class="profile-info">
@@ -144,6 +131,36 @@
                         <div id="genderFooter" class="gender-footer">Risk parity across genders</div>
                     </div>
                 </div>
+
+                <!-- Department Health Scorecard Table Moved Inside Grid Left -->
+                <section class="table-section" style="margin-top: 20px;">
+                    <div class="table-header">
+                        <h2>Department Health Scorecard</h2>
+                        <div class="table-actions">
+                            <input type="text" placeholder="Search department..." class="search-input">
+                            <button class="export-btn">↓ Export CSV</button>
+                        </div>
+                    </div>
+                    <table class="health-table">
+                        <thead>
+                            <tr>
+                                <th>Department</th>
+                                <th>Faculty Count</th>
+                                <th>Critical</th>
+                                <th>High Risk</th>
+                                <th>Moderate</th>
+                                <th>Healthy</th>
+                                <th>Avg Score</th>
+                                <th>Top Risk</th>
+                                <th>Screening %</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- Dynamic records will be inserted here -->
+                        </tbody>
+                    </table>
+                </section>
             </div>
 
             <!-- Right Column -->
@@ -200,61 +217,25 @@
                 </div>
             </div>
         </main>
-
-        <!-- Department Health Scorecard Table -->
-        <section class="table-section">
-            <div class="table-header">
-                <h2>Department Health Scorecard</h2>
-                <div class="table-actions">
-                    <input type="text" placeholder="Search department..." class="search-input">
-                    <button class="export-btn">↓ Export CSV</button>
-                </div>
-            </div>
-            <table class="health-table">
-                <thead>
-                    <tr>
-                        <th>Department</th>
-                        <th>Faculty Count</th>
-                        <th>Critical</th>
-                        <th>High Risk</th>
-                        <th>Moderate</th>
-                        <th>Healthy</th>
-                        <th>Avg Score</th>
-                        <th>Top Risk</th>
-                        <th>Screening %</th>
-                        <th>Action</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr>
-                        <td>IT Department</td>
-                        <td>158</td>
-                        <td class="critical">0</td>
-                        <td class="high">11</td>
-                        <td class="moderate">50</td>
-                        <td class="healthy">97</td>
-                        <td>72/100</td>
-                        <td>Diabetes</td>
-                        <td>98%</td>
-                        <td><span class="badge on-track">On Track</span></td>
-                    </tr>
-                    <tr>
-                        <td>Mechanical Engg</td>
-                        <td>137</td>
-                        <td class="critical">0</td>
-                        <td class="high">8</td>
-                        <td class="moderate">55</td>
-                        <td class="healthy">74</td>
-                        <td>72/100</td>
-                        <td>Diabetes</td>
-                        <td>98%</td>
-                        <td><span class="badge on-track">On Track</span></td>
-                    </tr>
-                </tbody>
-            </table>
-        </section>
     </div>
 
-    <script src="{{ url_for('demo-static', path='/js/dashboard.js') }}"></script>
+    <!-- Health Review Modal -->
+    <div id="healthModal" class="modal-overlay" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Detailed Health Review</h2>
+                <button class="close-modal" onclick="closeModal()">&times;</button>
+            </div>
+            <div id="modalBody" class="modal-body">
+                <!-- Content injected via JS -->
+            </div>
+            <div class="modal-footer">
+                <button class="action-btn primary" onclick="alert('PDF Report Generated')">Download PDF Report</button>
+                <button class="action-btn secondary" onclick="closeModal()">Close Review</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('demo-static', path='/js/dashboard.js') }}?v=1.0.1"></script>
 </body>
 </html>

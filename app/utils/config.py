@@ -15,14 +15,19 @@ class APIConfig(BaseSettings):
 
 class DatabaseConfig(BaseSettings):
     host: str = Field(default="localhost")
-    port: int = Field(default=5432)
-    user: str = Field(default="user")
+    port: int = Field(default=1433)
+    user: str = Field(default="sa")
     password: str = Field(default="password")
     db: str = Field(default="db")
+    driver: str = Field(default="ODBC Driver 18 for SQL Server")
     
     @property
     def url(self) -> str:
-        return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.db}"
+        # SQL Server URL for pyodbc
+        params = f"DRIVER={{{self.driver}}};SERVER={self.host},{self.port};DATABASE={self.db};UID={self.user};PWD={self.password};TrustServerCertificate=yes"
+        import urllib
+        encoded_params = urllib.parse.quote_plus(params)
+        return f"mssql+pyodbc:///?odbc_connect={encoded_params}"
 
 
 class BedrockConfig(BaseSettings):

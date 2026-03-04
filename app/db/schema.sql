@@ -1,42 +1,44 @@
-CREATE TYPE risk_status_enum AS ENUM ('Critical', 'High Risk', 'Moderate Risk', 'Healthy');
+-- SQL Server Schema
 
-CREATE TABLE hms_health_records (
-    -- 1. STAFF DETAILS (Direct columns for fast filtering/sorting)
-    id VARCHAR(50) PRIMARY KEY,
-    employee_id VARCHAR(50) NOT NULL,
-    year INT NOT NULL, -- e.g., 2024, 2025
-    name VARCHAR(100) NOT NULL,
-    age INT NOT NULL,
-    gender VARCHAR(10) NOT NULL,
-    department VARCHAR(50) NOT NULL, -- e.g., 'IT Department', 'Mechanical Engg'
-    screening_date DATE NOT NULL,
-    
-    -- 2. DASHBOARD ANALYTICS (Direct columns for the UI widgets)
-    health_score INT DEFAULT 0, -- 0 to 100
-    status risk_status_enum NOT NULL,
-    active_flags JSONB, -- Array of strings: ["HbA1c Diabetic", "Low Vitamin B12"]
-    
-    -- 3. THYROCARE DATA (Deep biochemical results)
-    -- Stored as JSONB for flexibility across different test packages
-    thyrocare_results JSONB, 
-    
-    -- 4. SECONDMEDIC DATA (Textual impressions and measurements)
-    -- Stores USG, ECG, X-Ray, and Echo findings
-    secondmedic_results JSONB, 
-    
-    -- 5. REPORT CONTENT
-    inference TEXT,
-    suggestion JSONB, -- Array of strings for the "Recommendations" section
-    
-    -- 6. SYSTEM METADATA
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'hms_health_records')
+BEGIN
+    CREATE TABLE hms_health_records (
+        -- 1. STAFF DETAILS
+        id NVARCHAR(50) PRIMARY KEY,
+        employee_id NVARCHAR(50) NOT NULL,
+        year INT NOT NULL,
+        name NVARCHAR(100) NOT NULL,
+        age INT NOT NULL,
+        gender NVARCHAR(10) NOT NULL,
+        department NVARCHAR(50) NOT NULL,
+        screening_date DATE NOT NULL,
+        
+        -- 2. DASHBOARD ANALYTICS
+        health_score INT DEFAULT 0,
+        status NVARCHAR(20) NOT NULL, -- 'Critical', 'High Risk', 'Moderate Risk', 'Healthy'
+        active_flags NVARCHAR(MAX), -- JSON string
+        
+        -- 3. THYROCARE DATA
+        thyrocare_results NVARCHAR(MAX), -- JSON string
+        
+        -- 4. SECONDMEDIC DATA
+        secondmedic_results NVARCHAR(MAX), -- JSON string
+        
+        -- 5. REPORT CONTENT
+        inference NVARCHAR(MAX),
+        suggestion NVARCHAR(MAX), -- JSON string
+        
+        -- 6. SYSTEM METADATA
+        cost NVARCHAR(MAX), -- JSON string
+        created_at DATETIME2 DEFAULT GETUTCDATE(),
 
-    -- Unique constraint to allow one record per staff per year
-    UNIQUE (employee_id, year)
-);
+        -- Unique constraint
+        CONSTRAINT UC_Employee_Year UNIQUE (employee_id, year)
+    );
 
--- Indexing for Dashboard Performance
-CREATE INDEX idx_dept ON hms_health_records(department);
-CREATE INDEX idx_status ON hms_health_records(status);
-CREATE INDEX idx_flags ON hms_health_records USING GIN (active_flags);
-CREATE INDEX idx_employee_year ON hms_health_records(employee_id, year);
+    -- Indexing
+    CREATE INDEX idx_dept ON hms_health_records(department);
+    CREATE INDEX idx_status ON hms_health_records(status);
+    CREATE INDEX idx_employee_year ON hms_health_records(employee_id, year);
+END
+GO

@@ -1,5 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Date, JSON, Text, Enum as SQLEnum
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import Column, Integer, String, DateTime, Date, JSON, Text, Numeric
 from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime
 import enum
@@ -35,20 +34,21 @@ class FacultyHealthRecord(Base):
     
     # 2. Dashboard Analytics
     health_score = Column(Integer, default=0)
-    status = Column(SQLEnum(RiskStatusEnum, name="risk_status_enum"), nullable=False, index=True)
-    active_flags = Column(JSONB, default=list) # Array of strings
+    status = Column(String(20), nullable=False, index=True)
+    active_flags = Column(JSON, default=list)
     
     # 3. Thyrocare Data
-    thyrocare_results = Column(JSONB, default=dict)
+    thyrocare_results = Column(JSON, default=dict)
     
     # 4. SecondMedic Data
-    secondmedic_results = Column(JSONB, default=dict)
+    secondmedic_results = Column(JSON, default=dict)
     
     # 5. Report Content
     inference = Column(Text, nullable=True)
-    suggestion = Column(JSONB, default=list) # Array of strings
+    suggestion = Column(JSON, default=list)
     
     # 6. System Metadata
+    cost = Column(JSON, default=dict) # Changed to JSON (NVARCHAR(MAX) in DB)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     def __repr__(self):

@@ -7,6 +7,7 @@ from app.core.chunking import TaggedRecursiveTextChunker
 from app.core.vector_db import VectorDB
 from app.core.llm.extraction import MedicalReportExtractor
 from app.aws.client import AWSClient
+from app.db.database import DatabaseManager
 from app.utils.config import settings
 from app.utils.logger import get_logger
 
@@ -61,8 +62,17 @@ class DocumentIngestor:
         aws_client = AWSClient()
         llm = aws_client.bedrock_chat(model_kwargs={"temperature": 0.0})
         extractor = MedicalReportExtractor(llm=llm, vector_db=vector_db)
-        llm_response = extractor.extract(full_text=full_text, source_id=self.source_id).model_dump(mode="json")
+        
+        # Perform extraction
+        profile = extractor.extract(full_text=full_text, source_id=self.source_id)
+        llm_response = profile.model_dump(mode="json")
         logger.info("LLM extraction complete.")
+
+        # 4. Database Insertion
+        logger.info("Upserting record to database...")
+        db_manager = DatabaseManager()
+        db_manager.upsert_faculty_health_record(profile)
+        logger.info("Database upsert complete.")
         
         return {
             "source_id": self.source_id,

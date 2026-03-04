@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sri Sai Ram Institution | Faculty Health Dashboard</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}?v=1.0.1">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 </head>
@@ -16,23 +16,10 @@
                 <div class="logo">SS</div>
                 <div class="institution-name">
                     <h1>Sri Sai Ram Institution</h1>
-                    <p>Faculty Health Dashboard</p>
                 </div>
             </div>
-            <nav class="nav-links">
-                <a href="#" class="active">Executive Summary</a>
-                <a href="#">Departments</a>
-                <a href="#">Disease Analytics</a>
-                <a href="#">Faculty Directory</a>
-                <a href="#">Flagged & Critical</a>
-                <a href="#">Mobility & Fitness</a>
-            </nav>
             <div class="user-profile">
                 <div class="notification-icon">
-                    <span class="badge">12</span>
-                </div>
-                <div class="date-display">
-                    22 Dec 2025
                 </div>
                 <div class="profile-avatar">HA</div>
                 <div class="profile-info">
@@ -112,51 +99,8 @@
                         <h2>Department-wise Risk Distribution</h2>
                         <p>Faculty health risk across all departments</p>
                     </div>
-                    <div class="dept-list">
-                        <!-- Repeat for each department -->
-                        <div class="dept-item">
-                            <div class="dept-header">
-                                <span class="dept-name">IT Department</span>
-                                <span class="dept-count">158 faculty</span>
-                            </div>
-                            <div class="progress-bar-group">
-                                <div class="progress-segment critical" style="width: 7%">7%</div>
-                                <div class="progress-segment high" style="width: 32%">32%</div>
-                                <div class="progress-segment healthy" style="width: 61%">61%</div>
-                            </div>
-                        </div>
-                        <div class="dept-item">
-                            <div class="dept-header">
-                                <span class="dept-name">Mechanical Engg</span>
-                                <span class="dept-count">137 faculty</span>
-                            </div>
-                            <div class="progress-bar-group">
-                                <div class="progress-segment critical" style="width: 6%">6%</div>
-                                <div class="progress-segment high" style="width: 40%">40%</div>
-                                <div class="progress-segment healthy" style="width: 54%">54%</div>
-                            </div>
-                        </div>
-                        <div class="dept-item">
-                            <div class="dept-header">
-                                <span class="dept-name">Civil Engg</span>
-                                <span class="dept-count">148 faculty</span>
-                            </div>
-                            <div class="progress-bar-group">
-                                <div class="progress-segment high" style="width: 41%">41%</div>
-                                <div class="progress-segment healthy" style="width: 59%">59%</div>
-                            </div>
-                        </div>
-                        <div class="dept-item">
-                            <div class="dept-header">
-                                <span class="dept-name">Electronics</span>
-                                <span class="dept-count">155 faculty</span>
-                            </div>
-                            <div class="progress-bar-group">
-                                <div class="progress-segment critical" style="width: 7%">7%</div>
-                                <div class="progress-segment high" style="width: 37%">37%</div>
-                                <div class="progress-segment healthy" style="width: 56%">56%</div>
-                            </div>
-                        </div>
+                    <div id="deptRiskList" class="dept-list">
+                        <!-- Dynamic department distribution will be inserted here -->
                     </div>
                     <div class="chart-legend">
                         <span class="legend-item"><span class="dot critical"></span> Critical</span>
@@ -176,17 +120,47 @@
                         <h3>Gender Health Comparison</h3>
                         <div class="gender-gauges">
                             <div class="gender-item">
-                                <span class="gender-label">Male (847)</span>
-                                <div class="semi-circle-gauge male"></div>
+                                <span id="maleCount" class="gender-label">Male (0)</span>
+                                <div id="maleGauge" class="semi-circle-gauge male" style="--pct: 0"></div>
                             </div>
                             <div class="gender-item">
-                                <span class="gender-label">Female (400)</span>
-                                <div class="semi-circle-gauge female"></div>
+                                <span id="femaleCount" class="gender-label">Female (0)</span>
+                                <div id="femaleGauge" class="semi-circle-gauge female" style="--pct: 0"></div>
                             </div>
                         </div>
-                        <div class="gender-footer">Males show 23% higher cardiac risk</div>
+                        <div id="genderFooter" class="gender-footer">Risk parity across genders</div>
                     </div>
                 </div>
+
+                <!-- Department Health Scorecard Table Moved Inside Grid Left -->
+                <section class="table-section" style="margin-top: 20px;">
+                    <div class="table-header">
+                        <h2>Department Health Scorecard</h2>
+                        <div class="table-actions">
+                            <input type="text" placeholder="Search department..." class="search-input">
+                            <button class="export-btn">↓ Export CSV</button>
+                        </div>
+                    </div>
+                    <table class="health-table">
+                        <thead>
+                            <tr>
+                                <th>Department</th>
+                                <th>Faculty Count</th>
+                                <th>Critical</th>
+                                <th>High Risk</th>
+                                <th>Moderate</th>
+                                <th>Healthy</th>
+                                <th>Avg Score</th>
+                                <th>Top Risk</th>
+                                <th>Screening %</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- Dynamic records will be inserted here -->
+                        </tbody>
+                    </table>
+                </section>
             </div>
 
             <!-- Right Column -->
@@ -202,10 +176,10 @@
                         </div>
                     </div>
                     <div class="side-list">
-                        <div class="side-item"><span class="dot critical"></span> Critical <span class="val">23</span></div>
-                        <div class="side-item"><span class="dot high"></span> High Risk <span class="val">187</span></div>
-                        <div class="side-item"><span class="dot moderate"></span> Moderate <span class="val">412</span></div>
-                        <div class="side-item"><span class="dot healthy"></span> Healthy <span class="val">625</span></div>
+                        <div class="side-item"><span class="dot critical"></span> Critical <span id="legendCritical" class="val">0</span></div>
+                        <div class="side-item"><span class="dot high"></span> High Risk <span id="legendHigh" class="val">0</span></div>
+                        <div class="side-item"><span class="dot moderate"></span> Moderate <span id="legendModerate" class="val">0</span></div>
+                        <div class="side-item"><span class="dot healthy"></span> Healthy <span id="legendHealthy" class="val">0</span></div>
                     </div>
                 </div>
 
@@ -234,87 +208,34 @@
                 <!-- Live Alerts -->
                 <div class="card alert-card">
                     <div class="card-header">
-                        <h3><span class="dot danger"></span> Live Alerts</h3>
+                        <h3><span class="dot danger"></span> Live Alerts (<span id="alertCount">0</span>)</h3>
                     </div>
                     <div class="alert-list">
-                        <div class="alert-item">
-                            <div class="alert-avatar sm">SM</div>
-                            <div class="alert-content">
-                                <h4>Dr. S Murali (IT)</h4>
-                                <p>CRP 39.28 critically elevated + Post-CABG patient</p>
-                                <span class="time">2 hrs ago</span>
-                            </div>
-                            <button class="review-btn">Review</button>
-                        </div>
-                        <div class="alert-item">
-                            <div class="alert-avatar rk">RK</div>
-                            <div class="alert-content">
-                                <h4>Dr. R Kumar (Mech Engg)</h4>
-                                <p>HbA1c 8.2% - Poor diabetic control</p>
-                                <span class="time">3 hrs ago</span>
-                            </div>
-                            <button class="review-btn">Review</button>
-                        </div>
+                        <!-- Dynamic alerts will be inserted here -->
                     </div>
-                    <a href="#" class="view-all">View All 12 Alerts →</a>
+                    <a href="#" class="view-all">View All <span id="totalAlertsLink">0</span> Alerts →</a>
                 </div>
             </div>
         </main>
-
-        <!-- Department Health Scorecard Table -->
-        <section class="table-section">
-            <div class="table-header">
-                <h2>Department Health Scorecard</h2>
-                <div class="table-actions">
-                    <input type="text" placeholder="Search department..." class="search-input">
-                    <button class="export-btn">↓ Export CSV</button>
-                </div>
-            </div>
-            <table class="health-table">
-                <thead>
-                    <tr>
-                        <th>Department</th>
-                        <th>Faculty Count</th>
-                        <th>Critical</th>
-                        <th>High Risk</th>
-                        <th>Moderate</th>
-                        <th>Healthy</th>
-                        <th>Avg Score</th>
-                        <th>Top Risk</th>
-                        <th>Screening %</th>
-                        <th>Action</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr>
-                        <td>IT Department</td>
-                        <td>158</td>
-                        <td class="critical">0</td>
-                        <td class="high">11</td>
-                        <td class="moderate">50</td>
-                        <td class="healthy">97</td>
-                        <td>72/100</td>
-                        <td>Diabetes</td>
-                        <td>98%</td>
-                        <td><span class="badge on-track">On Track</span></td>
-                    </tr>
-                    <tr>
-                        <td>Mechanical Engg</td>
-                        <td>137</td>
-                        <td class="critical">0</td>
-                        <td class="high">8</td>
-                        <td class="moderate">55</td>
-                        <td class="healthy">74</td>
-                        <td>72/100</td>
-                        <td>Diabetes</td>
-                        <td>98%</td>
-                        <td><span class="badge on-track">On Track</span></td>
-                    </tr>
-                </tbody>
-            </table>
-        </section>
     </div>
 
-    <script src="{{ url_for('static', path='/js/dashboard.js') }}"></script>
+    <!-- Health Review Modal -->
+    <div id="healthModal" class="modal-overlay" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Detailed Health Review</h2>
+                <button class="close-modal" onclick="closeModal()">&times;</button>
+            </div>
+            <div id="modalBody" class="modal-body">
+                <!-- Content injected via JS -->
+            </div>
+            <div class="modal-footer">
+                <button class="action-btn primary" onclick="alert('PDF Report Generated')">Download PDF Report</button>
+                <button class="action-btn secondary" onclick="closeModal()">Close Review</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', path='/js/dashboard.js') }}?v=1.0.1"></script>
 </body>
 </html>

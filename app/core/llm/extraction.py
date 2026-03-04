@@ -207,6 +207,10 @@ class MedicalReportExtractor:
     def combine_results(self, state: GraphState) -> Dict:
         """Combines all extracted data into a final profile."""
         inf = state.get("health_inference") or {}
+        staff = state.get("staff_details") or StaffDetails()
+        
+        # Update staff details with health score from inference
+        staff.overall_health_score = inf.get("overall_health_score", 0)
         
         # Calculate cost: $0.15 per 1M tokens for both input and output (placeholder for Llama 3.2 3B)
         input_tokens = state.get("input_tokens", 0)
@@ -220,7 +224,7 @@ class MedicalReportExtractor:
         )
         
         final_summary = FacultyHealthProfile(
-            staff_details=state.get("staff_details") or StaffDetails(),
+            staff_details=staff,
             thyrocare=state.get("thyrocare_details") or Thyrocare(),
             secondmedic=state.get("secondmedic_details") or SecondMedic(),
             inference=inf.get("inference", ""),
