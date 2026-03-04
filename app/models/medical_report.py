@@ -134,6 +134,12 @@ class SecondMedic(BaseModel):
     )
 
 
+class CostDetails(BaseModel):
+    input_tokens: int = Field(0, description="Number of input tokens used.")
+    output_tokens: int = Field(0, description="Number of output tokens generated.")
+    cost: float = Field(0.0, description="Total estimated cost in USD.")
+
+
 class FacultyHealthProfile(BaseModel):
     staff_details: StaffDetails = Field(
         default_factory=StaffDetails,
@@ -179,4 +185,9 @@ class FacultyHealthProfile(BaseModel):
     suggestion: List[str] = Field(
         default_factory=list,
         description="Actionable medical or lifestyle recommendations for the faculty member."
+    )
+
+    cost: CostDetails = Field(
+        default_factory=CostDetails,
+        description="Detailed token usage and cost information for the extraction."
     )

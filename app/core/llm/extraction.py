@@ -1,4 +1,5 @@
-from typing import List, TypedDict, Optional, Dict
+import operator
+from typing import List, TypedDict, Optional, Dict, Annotated
 
 from langchain_aws.chat_models import ChatBedrock
 from langgraph.graph import StateGraph, END
@@ -6,7 +7,7 @@ from pydantic import BaseModel
 
 from app.core.llm.prompts import staff_details, thyrocare_details, second_medic_details, health_inference
 from app.core.vector_db import VectorDB
-from app.models.medical_report import StaffDetails, Thyrocare, SecondMedic, FacultyHealthProfile
+from app.models.medical_report import StaffDetails, Thyrocare, SecondMedic, FacultyHealthProfile, CostDetails
 
 
 def _join_context(chunks: list[str], *, max_chars: int = 12000) -> str:
@@ -35,6 +36,8 @@ class GraphState(TypedDict):
     secondmedic_details: Optional[SecondMedic]
     health_inference: Optional[Dict]
     final_summary: Optional[FacultyHealthProfile]
+    input_tokens: Annotated[int, operator.add]
+    output_tokens: Annotated[int, operator.add]
 
 
 class MedicalReportExtractor:
@@ -69,7 +72,14 @@ class MedicalReportExtractor:
         return graph.compile()
 
     def extract(self, full_text: str, *, source_id: Optional[str] = None) -> FacultyHealthProfile:
-        inputs = {"full_text": full_text, "source_id": source_id, "report_type_chunks": {}, "staff_context": None}
+        inputs = {
+            "full_text": full_text, 
+            "source_id": source_id, 
+            "report_type_chunks": {}, 
+            "staff_context": None,
+            "input_tokens": 0,
+            "output_tokens": 0
+        }
         result = self.graph.invoke(inputs)
         return result.get("final_summary", FacultyHealthProfile())
 
@@ -113,32 +123,64 @@ class MedicalReportExtractor:
             "staff_context": _join_context(staff_chunks, max_chars=6000)
         }
 
+    def _get_token_usage(self, response) -> tuple[int, int]:
+        """Extracts token usage from Bedrock response metadata."""
+        try:
+            usage = response.response_metadata.get("usage", {})
+            return usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
+        except:
+            return 0, 0
+
     def extract_staff_details(self, state: GraphState) -> Dict:
         """Extracts staff details from the first pages of both reports (fallback: full text)."""
-        chain = staff_details.PROMPT | self.llm | staff_details.parser
+        chain = staff_details.PROMPT | self.llm
         context = (state.get("staff_context") or "").strip() or state["full_text"]
-        extracted = chain.invoke({"context": context})
-        return {"staff_details": extracted}
+        response = chain.invoke({"context": context})
+        
+        extracted = staff_details.parser.invoke(response)
+        in_tokens, out_tokens = self._get_token_usage(response)
+        
+        return {
+            "staff_details": extracted,
+            "input_tokens": in_tokens,
+            "output_tokens": out_tokens
+        }
 
     def extract_thyrocare_details(self, state: GraphState) -> Dict:
         """Extracts Thyrocare details from filtered chunks."""
         context = _join_context(state["report_type_chunks"].get("thyrocare", []))
         if not context:
-            return {"thyrocare_details": Thyrocare()}
+            return {"thyrocare_details": Thyrocare(), "input_tokens": 0, "output_tokens": 0}
 
-        chain = thyrocare_details.PROMPT | self.llm | thyrocare_details.parser
-        extracted = chain.invoke({"context": context})
-        return {"thyrocare_details": extracted}
+        chain = thyrocare_details.PROMPT | self.llm
+        response = chain.invoke({"context": context})
+        
+        extracted = thyrocare_details.parser.invoke(response)
+        in_tokens, out_tokens = self._get_token_usage(response)
+        
+        return {
+            "thyrocare_details": extracted,
+            "input_tokens": in_tokens,
+            "output_tokens": out_tokens
+        }
 
     def extract_secondmedic_details(self, state: GraphState) -> Dict:
         """Extracts SecondMedic details from filtered chunks."""
         context = _join_context(state["report_type_chunks"].get("second_medic", []))
         if not context:
-            return {"secondmedic_details": SecondMedic()}
+            return {"secondmedic_details": SecondMedic(), "input_tokens": 0, "output_tokens": 0}
 
-        chain = second_medic_details.PROMPT | self.llm | second_medic_details.parser
-        extracted = chain.invoke({"context": context})
-        return {"secondmedic_details": extracted}
+        chain = second_medic_details.PROMPT | self.llm
+        response = chain.invoke({"context": context})
+        
+        extracted = second_medic_details.parser.invoke(response)
+        in_tokens, out_tokens = self._get_token_usage(response)
+        
+        return {
+            "secondmedic_details": extracted,
+            "input_tokens": in_tokens,
+            "output_tokens": out_tokens
+        }
 
     def generate_health_inference(self, state: GraphState) -> Dict:
         """Generates a consolidated medical summary using the extracted data."""
@@ -146,17 +188,37 @@ class MedicalReportExtractor:
         secondmedic = state.get("secondmedic_details") or SecondMedic()
         staff = state.get("staff_details") or StaffDetails()
 
-        chain = health_inference.PROMPT | self.llm | health_inference.parser
-        result = chain.invoke({
+        chain = health_inference.PROMPT | self.llm
+        response = chain.invoke({
             "thyrocare_json": thyrocare.model_dump_json(),
             "secondmedic_json": secondmedic.model_dump_json(),
             "staff_details_json": staff.model_dump_json()
         })
-        return {"health_inference": result}
+        
+        result = health_inference.parser.invoke(response)
+        in_tokens, out_tokens = self._get_token_usage(response)
+        
+        return {
+            "health_inference": result,
+            "input_tokens": in_tokens,
+            "output_tokens": out_tokens
+        }
 
     def combine_results(self, state: GraphState) -> Dict:
         """Combines all extracted data into a final profile."""
         inf = state.get("health_inference") or {}
+        
+        # Calculate cost: $0.15 per 1M tokens for both input and output (placeholder for Llama 3.2 3B)
+        input_tokens = state.get("input_tokens", 0)
+        output_tokens = state.get("output_tokens", 0)
+        total_cost = (input_tokens + output_tokens) * (0.15 / 1_000_000)
+        
+        cost_details = CostDetails(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost=round(total_cost, 6)
+        )
+        
         final_summary = FacultyHealthProfile(
             staff_details=state.get("staff_details") or StaffDetails(),
             thyrocare=state.get("thyrocare_details") or Thyrocare(),
@@ -165,5 +227,6 @@ class MedicalReportExtractor:
             active_flags=inf.get("active_flags", []),
             status=inf.get("status", ""),
             suggestion=inf.get("suggestion", []),
+            cost=cost_details
         )
         return {"final_summary": final_summary}
