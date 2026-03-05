@@ -60,3 +60,7 @@ async def demo(request: Request):
 # Include routers
 app.include_router(upload.router, prefix="/extract")
 app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["Analytics"])
+
+# Import and include cache router
+from app.api.endpoints import cache
+app.include_router(cache.router, prefix="/api/v1/cache", tags=["Cache"])

@@ -14,20 +14,26 @@ class APIConfig(BaseSettings):
 
 
 class DatabaseConfig(BaseSettings):
+    type: str = Field(default="sqlite")  # "sqlite" or "mssql"
     host: str = Field(default="localhost")
     port: int = Field(default=1433)
     user: str = Field(default="sa")
     password: str = Field(default="password")
     db: str = Field(default="db")
-    driver: str = Field(default="ODBC Driver 18 for SQL Server")
+    driver: str = Field(default="ODBC Driver 17 for SQL Server")
+    sqlite_path: str = Field(default="hms_data.db")
     
     @property
     def url(self) -> str:
-        # SQL Server URL for pyodbc
-        params = f"DRIVER={{{self.driver}}};SERVER={self.host},{self.port};DATABASE={self.db};UID={self.user};PWD={self.password};TrustServerCertificate=yes"
-        import urllib
-        encoded_params = urllib.parse.quote_plus(params)
-        return f"mssql+pyodbc:///?odbc_connect={encoded_params}"
+        if self.type == "sqlite":
+            # SQLite URL for local testing
+            return f"sqlite:///{self.sqlite_path}"
+        else:
+            # SQL Server URL for pyodbc
+            params = f"DRIVER={{{self.driver}}};SERVER={self.host},{self.port};DATABASE={self.db};UID={self.user};PWD={self.password};TrustServerCertificate=yes"
+            import urllib
+            encoded_params = urllib.parse.quote_plus(params)
+            return f"mssql+pyodbc:///?odbc_connect={encoded_params}"
 
 
 class BedrockConfig(BaseSettings):
@@ -47,6 +53,13 @@ class VectorDBConfig(BaseSettings):
     flush_after_extraction: bool = Field(default=False)
 
 
+class RedisConfig(BaseSettings):
+    host: str = Field(default="localhost")
+    port: int = Field(default=6379)
+    db: int = Field(default=0)
+    ttl: int = Field(default=3600)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         yaml_file=Path(__file__).parent.parent.parent / "config.yaml",
@@ -57,6 +70,7 @@ class Settings(BaseSettings):
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     aws: AWSConfig = Field(default_factory=AWSConfig)
     vector_db: VectorDBConfig = Field(default_factory=VectorDBConfig)
+    redis: RedisConfig = Field(default_factory=RedisConfig)
 
     @classmethod
     def settings_customise_sources(

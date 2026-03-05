@@ -24,6 +24,10 @@ Format the output according to the following schema.
 If a test group or a specific test is not mentioned, leave it out of the output.
 Each test group (e.g., Diabetes Panel) is a list of results.
 
+CRITICAL: Return ONLY valid JSON without any comments, explanations, or additional text.
+- DO NOT include comments like "// inferred from..." in the JSON output.
+- DO NOT add any text before or after the JSON.
+
 Format Instructions:
 {format_instructions}
 """

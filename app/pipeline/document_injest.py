@@ -71,7 +71,7 @@ class DocumentIngestor:
         # 4. Database Insertion
         logger.info("Upserting record to database...")
         db_manager = DatabaseManager()
-        db_manager.upsert_faculty_health_record(profile)
+        db_manager.upsert_faculty_health_record(profile, source_id=self.source_id)
         logger.info("Database upsert complete.")
         
         return {

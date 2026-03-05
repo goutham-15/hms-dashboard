@@ -32,6 +32,10 @@ Please provide the following:
 4. Suggestions: A list of actionable medical or lifestyle recommendations.
 5. Overall Health Score: A numerical health score from 0 to 100 based on all available data. 100 is perfectly healthy, 0 is critical.
 
+CRITICAL: Return ONLY valid JSON without any comments, explanations, or additional text.
+- DO NOT include comments like "// inferred from..." in the JSON output.
+- DO NOT add any text before or after the JSON.
+
 Format Instructions:
 {format_instructions}
 """

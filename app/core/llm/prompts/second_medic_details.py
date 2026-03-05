@@ -22,6 +22,10 @@ For each report type, extract the 'findings' and 'impression'.
 Format the output according to the following schema.
 If a report type is not mentioned in the context, leave it out of the output.
 
+CRITICAL: Return ONLY valid JSON without any comments, explanations, or additional text.
+- DO NOT include comments like "// inferred from..." in the JSON output.
+- DO NOT add any text before or after the JSON.
+
 Format Instructions:
 {format_instructions}
 """

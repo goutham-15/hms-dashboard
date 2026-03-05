@@ -8,10 +8,16 @@ from app.core.llm.extraction import MedicalReportExtractor
 from app.core.vector_db import VectorDB
 from app.utils.config import settings
 from app.utils.logger import get_logger
+from app.utils.redis_client import RedisClient
 from app.aws.client import AWSClient
+from app.db.database import DatabaseManager
 
 logger = get_logger(name="api_upload")
 router = APIRouter()
+
+# Initialize Redis client and DB manager
+redis_client = RedisClient()
+db_manager = DatabaseManager()
 
 @router.post("/upload", tags=["Extraction"])
 async def extract_upload_pdf(
@@ -66,6 +72,18 @@ async def extract_upload_pdf(
 
         payload = extracted.model_dump(mode="json")
         logger.info("Extraction complete: source_id=%s", source_id)
+        
+        # 4. Save to database
+        try:
+            db_manager.upsert_faculty_health_record(extracted)
+            logger.info("Saved to database: source_id=%s", source_id)
+            
+            # 5. Invalidate cache since new data was added
+            redis_client.clear_pattern("analytics:*")
+            logger.info("Cache invalidated after new upload")
+        except Exception as db_error:
+            logger.error(f"Failed to save to database: {db_error}")
+            # Continue even if DB save fails
 
         return payload
     except HTTPException:

@@ -1,2 +1,1 @@
-"""Utilities (config, logging)."""
-
+# Utils package

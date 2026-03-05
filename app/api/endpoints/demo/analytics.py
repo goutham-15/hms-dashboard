@@ -6,11 +6,35 @@ import os
 import pandas as pd
 import io
 
+from app.db.database import DatabaseManager
+from app.utils.redis_client import RedisClient
+from app.utils.logger import get_logger
+
 router = APIRouter()
+logger = get_logger(name="analytics")
 
 DEMO_FILE = "demo_records.jsonl"
 
+# Lazy-load DB and Redis clients to avoid startup crashes
+_db_manager = None
+_redis_client = None
+
+def get_db_manager():
+    """Get or create DatabaseManager instance."""
+    global _db_manager
+    if _db_manager is None:
+        _db_manager = DatabaseManager()
+    return _db_manager
+
+def get_redis_client():
+    """Get or create RedisClient instance."""
+    global _redis_client
+    if _redis_client is None:
+        _redis_client = RedisClient()
+    return _redis_client
+
 def load_demo_data():
+    """Load demo data from JSONL file (fallback)."""
     if not os.path.exists(DEMO_FILE):
         return []
     records = []
@@ -20,9 +44,52 @@ def load_demo_data():
                 records.append(json.loads(line))
     return records
 
+def get_data_from_cache_or_db():
+    """
+    Fetch data with cache-aside pattern:
+    1. Check Redis cache first
+    2. If cache miss, fetch from database
+    3. Store in cache for next time
+    """
+    cache_key = "analytics:all_records"
+    redis_client = get_redis_client()
+    
+    # Try cache first
+    cached_data = redis_client.get(cache_key)
+    if cached_data:
+        return cached_data
+    
+    # Cache miss - fetch from database
+    logger.info("Fetching data from database")
+    try:
+        db_manager = get_db_manager()
+        data = db_manager.get_all_records()
+        
+        # If DB is empty, fallback to demo data
+        if not data:
+            logger.warning("No data in database, using demo data")
+            data = load_demo_data()
+        
+        # Store in cache
+        redis_client.set(cache_key, data)
+        return data
+    except Exception as e:
+        logger.error(f"Database fetch failed: {e}, falling back to demo data")
+        return load_demo_data()
+
 @router.get("/summary")
 async def get_summary():
-    data = load_demo_data()
+    """Get summary statistics with caching."""
+    cache_key = "analytics:summary"
+    redis_client = get_redis_client()
+    
+    # Check cache first
+    cached = redis_client.get(cache_key)
+    if cached:
+        return cached
+    
+    # Cache miss - compute from data
+    data = get_data_from_cache_or_db()
     total = len(data)
     critical = sum(1 for r in data if r["status"] == "Critical")
     high = sum(1 for r in data if r["status"] == "High Risk")
@@ -30,7 +97,7 @@ async def get_summary():
     healthy = sum(1 for r in data if r["status"] == "Healthy")
     avg_score = sum(r.get("health_score", 0) for r in data) / total if total > 0 else 0
     
-    return {
+    result = {
         "total_faculty": total,
         "critical": critical,
         "high_risk": high,
@@ -38,10 +105,24 @@ async def get_summary():
         "healthy": healthy,
         "avg_health_score": round(avg_score, 1)
     }
+    
+    # Store in cache
+    redis_client.set(cache_key, result)
+    return result
 
 @router.get("/stats")
 async def get_stats():
-    data = load_demo_data()
+    """Get detailed statistics with caching."""
+    cache_key = "analytics:stats"
+    redis_client = get_redis_client()
+    
+    # Check cache first
+    cached = redis_client.get(cache_key)
+    if cached:
+        return cached
+    
+    # Cache miss - compute from data
+    data = get_data_from_cache_or_db()
     
     # Donut Chart
     status_counts = {"Critical": 0, "High Risk": 0, "Moderate Risk": 0, "Healthy": 0}
@@ -100,32 +181,80 @@ async def get_stats():
         if r["status"] in ["Critical", "High Risk"]:
             gender_stats[g]["high_risk"] += 1
 
-    return {
+    result = {
         "status_distribution": status_counts,
         "age_risk": age_groups,
         "top_conditions": sorted_flags[:5],
         "department_distribution": depts,
         "gender_comparison": gender_stats
     }
+    
+    # Store in cache
+    redis_client.set(cache_key, result)
+    return result
 
 @router.get("/alerts")
 async def get_alerts():
-    data = load_demo_data()
-    # Filter for Critical and High Risk, sort by date (demo data is small so we just take them)
+    """Get critical alerts with caching."""
+    cache_key = "analytics:alerts"
+    redis_client = get_redis_client()
+    
+    # Check cache first
+    cached = redis_client.get(cache_key)
+    if cached:
+        return cached
+    
+    # Cache miss - compute from data
+    data = get_data_from_cache_or_db()
     alerts = [r for r in data if r["status"] in ["Critical", "High Risk"]]
-    return alerts[:5]
+    result = alerts[:5]
+    
+    # Store in cache
+    redis_client.set(cache_key, result)
+    return result
 
 @router.get("/records")
 async def get_records(query: Optional[str] = None):
-    data = load_demo_data()
+    """Get all records or search with caching."""
+    redis_client = get_redis_client()
+    
     if query:
-        query = query.lower()
-        data = [r for r in data if query in r["name"].lower() or query in r["employee_id"].lower() or query in r["department"].lower()]
-    return data
+        # Search with cache
+        cache_key = f"analytics:search:{query.lower()}"
+        cached = redis_client.get(cache_key)
+        if cached:
+            return cached
+        
+        # Cache miss - search in DB or fallback
+        try:
+            db_manager = get_db_manager()
+            data = db_manager.search_records(query)
+            if not data:
+                # Fallback to demo data search
+                all_data = load_demo_data()
+                query_lower = query.lower()
+                data = [r for r in all_data if query_lower in r["name"].lower() or 
+                       query_lower in r["employee_id"].lower() or 
+                       query_lower in r["department"].lower()]
+        except Exception as e:
+            logger.error(f"Search failed: {e}, using demo data")
+            all_data = load_demo_data()
+            query_lower = query.lower()
+            data = [r for r in all_data if query_lower in r["name"].lower() or 
+                   query_lower in r["employee_id"].lower() or 
+                   query_lower in r["department"].lower()]
+        
+        # Store in cache with shorter TTL for searches
+        redis_client.set(cache_key, data, ttl=1800)
+        return data
+    else:
+        # Return all records (uses main cache)
+        return get_data_from_cache_or_db()
 
 @router.get("/export")
 async def export_excel():
-    data = load_demo_data()
+    """Export data to Excel (always fresh data, no caching)."""
+    data = get_data_from_cache_or_db()
     if not data:
         return {"error": "No data available"}
     
