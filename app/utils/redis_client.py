@@ -36,9 +36,14 @@ class RedisClient:
         """Set value in cache with JSON serialization."""
         try:
             serialized = json.dumps(value)
-            ttl = ttl or self.default_ttl
-            self.client.setex(key, ttl, serialized)
-            logger.info(f"Cache SET: {key} (TTL: {ttl}s)")
+            ttl = ttl if ttl is not None else self.default_ttl
+            
+            if ttl > 0:
+                self.client.setex(key, ttl, serialized)
+                logger.info(f"Cache SET: {key} (TTL: {ttl}s)")
+            else:
+                self.client.set(key, serialized)
+                logger.info(f"Cache SET: {key} (No TTL)")
             return True
         except Exception as e:
             logger.error(f"Redis SET error for key {key}: {e}")

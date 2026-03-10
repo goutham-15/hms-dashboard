@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Iterator
 
-from pdf2image import convert_from_path, pdfinfo_from_path
-from PIL import Image
-import pytesseract
+from docling.datamodel.base_models import InputFormat
+from docling.datamodel.pipeline_options import PdfPipelineOptions
+from docling.document_converter import DocumentConverter, PdfFormatOption
 
 from app.utils.logger import get_logger
 
@@ -15,68 +15,64 @@ logger = get_logger(name="document_loader")
 
 class DocumentLoader:
     """
-    Single-file OCR text extractor.
-
-    This loader takes one file path (PDF or image) and returns OCR text only.
+    Single-file document text extractor using docling with OCR-heavy image pipeline.
     """
 
-    def __init__(self, file_path: str | Path, *, tesseract_cmd: Optional[str] = None) -> None:
+    _converter = None
+
+    def __init__(self, file_path: str | Path) -> None:
         self.file_path = Path(file_path)
         if not self.file_path.exists():
             raise FileNotFoundError(f"File not found: {self.file_path}")
 
-        if tesseract_cmd:
-            pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
+    @classmethod
+    def _get_converter(cls) -> DocumentConverter:
+        """Lazy load the DocumentConverter once across instances with OCR pipeline."""
+        if cls._converter is None:
+            logger.info("Initializing docling DocumentConverter with Image/OCR pipeline...")
+            
+            # Configure to force OCR on all pages (treating PDF as images)
+            pipeline_options = PdfPipelineOptions()
+            pipeline_options.do_ocr = True
+            pipeline_options.ocr_options.force_full_page_ocr = True
+            pipeline_options.ocr_options.lang = ["eng"]
+            
+            cls._converter = DocumentConverter(
+                format_options={
+                    InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
+                }
+            )
+            logger.info("Converter initialized with forced OCR pipeline.")
+        return cls._converter
 
-    @staticmethod
-    def _ocr_image(image: Image.Image, *, language: str) -> str:
-        return (pytesseract.image_to_string(image, lang=language) or "").strip()
-
-    def iter_pages_text(self, *, dpi: int = 300, language: str = "eng") -> Iterator[tuple[int, str]]:
+    def iter_pages_text(self, *, language: str = "en", **kwargs) -> Iterator[tuple[int, str]]:
         """
-        Yield OCR text per page for PDFs, or a single (1, text) for images.
+        Yield text per page using docling.
         """
-        suffix = self.file_path.suffix.lower()
+        converter = self._get_converter()
 
-        if suffix == ".pdf":
-            try:
-                info = pdfinfo_from_path(self.file_path)
-                num_pages = int(info.get("Pages", 0))
-            except Exception:
-                num_pages = 0
-
-            if num_pages <= 0:
-                logger.warning("Unable to detect PDF page count; attempting a full conversion: %s", self.file_path.name)
-                images = convert_from_path(self.file_path, dpi=dpi)
-                for idx, image in enumerate(images, start=1):
-                    yield idx, self._ocr_image(image, language=language)
-                return
-
-            for page_number in range(1, num_pages + 1):
-                images = convert_from_path(
-                    self.file_path,
-                    dpi=dpi,
-                    first_page=page_number,
-                    last_page=page_number,
-                )
-                if not images:
-                    yield page_number, ""
+        try:
+            result = converter.convert(self.file_path)
+            for page in result.pages:
+                page_no = page.page_no
+                try:
+                    page_doc = result.document.filter(page_nrs={page_no})
+                    text = page_doc.export_to_markdown()
+                    yield page_no, text
+                except Exception as e:
+                    logger.warning("Failed to filter page %s: %s", page_no, e)
                     continue
-                yield page_number, self._ocr_image(images[0], language=language)
-            return
+        except Exception as e:
+            logger.error("Error during docling conversion on %s: %s", self.file_path.name, str(e))
+            raise
 
-        # Assume image-like input (png/jpg/etc.)
-        with Image.open(self.file_path) as image:
-            yield 1, self._ocr_image(image, language=language)
-
-    def extract_text(self, *, dpi: int = 300, language: str = "eng") -> str:
+    def extract_text(self, *, language: str = "en") -> str:
         """
-        OCR the entire file and return combined text.
+        Convert the entire file and return combined text.
         """
         parts: list[str] = []
-        for page_number, text in self.iter_pages_text(dpi=dpi, language=language):
-            logger.info("OCR page %s: chars=%s file=%s", page_number, len(text), self.file_path.name)
+        for page_number, text in self.iter_pages_text(language=language):
+            logger.info("Processed page %s: chars=%s file=%s", page_number, len(text), self.file_path.name)
             if text:
                 parts.append(text)
         return "\n\n".join(parts).strip()
-

@@ -46,7 +46,7 @@ async def extract_upload_pdf(
 
         # 1. Load and process the document
         loader = DocumentLoader(pdf_path)
-        pages = list(loader.iter_pages_text(dpi=200))
+        pages = list(loader.iter_pages_text())
         full_text = "\n\n".join([text for _, text in pages]).strip()
         
         chunker = TaggedRecursiveTextChunker()
@@ -75,12 +75,13 @@ async def extract_upload_pdf(
         
         # 4. Save to database
         try:
-            db_manager.upsert_faculty_health_record(extracted)
+            db_manager.upsert_faculty_health_record(extracted, source_id=source_id)
             logger.info("Saved to database: source_id=%s", source_id)
             
-            # 5. Invalidate cache since new data was added
-            redis_client.clear_pattern("analytics:*")
-            logger.info("Cache invalidated after new upload")
+            # 5. Proactively update analytics cache
+            from app.utils.analytics_utils import calculate_and_update_cache
+            calculate_and_update_cache()
+            logger.info("Analytics cache proactively updated after new upload")
         except Exception as db_error:
             logger.error(f"Failed to save to database: {db_error}")
             # Continue even if DB save fails

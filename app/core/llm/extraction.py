@@ -113,13 +113,11 @@ class MedicalReportExtractor:
         thy_docs = _get_docs({**base, "report_type": "thyrocare"})
         second_docs = _get_docs({**base, "report_type": "second_medic"})
 
+        # Get ONLY the first chunk of the SecondMedic report for staff identity
         staff_chunks: list[str] = []
-        for rt in ("thyrocare", "second_medic"):
-            first = _get_docs({**base, "report_type": rt, "report_start": True})
-            if not first:
-                first = _get_docs({**base, "report_type": rt, "page_in_report": 1})
-            if first:
-                staff_chunks.append(first[0])
+        first_sm = _get_docs({**base, "report_type": "second_medic", "page_in_report": 1})
+        if first_sm:
+            staff_chunks.append(first_sm[0])
         
         return {
             "report_type_chunks": {"thyrocare": thy_docs, "second_medic": second_docs},
@@ -156,70 +154,67 @@ class MedicalReportExtractor:
         return text
 
     def extract_staff_details(self, state: GraphState) -> Dict:
-        """Extracts staff details from the first pages of both reports (fallback: full text)."""
+        """
+        Extracts staff details in 3 parts:
+        1. Extract staff ID and report data (screening date, score) from the first chunk using LLM.
+        2. Get staff details (Name, Age, Gender, Dept) from the staff_master table.
+        3. Fill and merge details: Identity from DB, Screening info from LLM.
+        """
         logger = get_logger(name="extraction")
-        
-        # First, try to get staff details from Staff Master DB using SecondMedic first page
         staff_master_db = StaffMasterDB()
         
-        # Get first page of SecondMedic report for staff ID extraction
-        second_medic_chunks = state["report_type_chunks"].get("second_medic", [])
-        first_page_text = second_medic_chunks[0] if second_medic_chunks else ""
-        
-        # Try to extract and enrich from Staff Master DB
-        extracted = staff_details.StaffDetails()
-        
-        if first_page_text:
-            try:
-                staff_master_db.enrich_staff_details(extracted, first_page_text)
-                logger.info("Staff details enriched from Staff Master DB")
-            except Exception as e:
-                logger.warning(f"Failed to enrich from Staff Master DB: {e}")
-        
-        # If we still don't have key details, fall back to LLM extraction
-        if not extracted.employee_id or not extracted.name:
-            logger.info("Falling back to LLM extraction for staff details")
+        # Context: First chunk of SecondMedic report (per requirement)
+        context = (state.get("staff_context") or "").strip()
+        if not context:
+            full_text = state.get("full_text", "")
+            context = full_text[:2000] if full_text else ""
             
-            chain = staff_details.PROMPT | self.llm
-            # Use staff_context if available, otherwise use limited full_text
-            context = (state.get("staff_context") or "").strip()
-            if not context:
-                # Limit full_text to first 1000 chars to avoid token limit
-                full_text = state.get("full_text", "")
-                context = full_text[:1000] if full_text else ""
-            
+        # Part 1: LLM Extraction (Identity + Screening Info)
+        logger.info("Part 1: LLM extracting ID and screening info from document...")
+        chain = staff_details.PROMPT | self.llm
+        in_tokens, out_tokens = 0, 0
+        final_staff = StaffDetails()
+        
+        try:
             response = chain.invoke({"context": context})
+            in_tokens, out_tokens = self._get_token_usage(response)
             
-            # Clean the response before parsing
-            cleaned_response_text = self._clean_llm_response(response)
+            cleaned_response = self._clean_llm_response(response)
+            json_data = json.loads(cleaned_response)
+            llm_result = StaffDetails(**json_data)
             
-            # Parse the cleaned JSON string directly
-            try:
-                # Try to parse as JSON first
-                json_data = json.loads(cleaned_response_text)
-                llm_extracted = staff_details.StaffDetails(**json_data)
+            # Initial values from LLM
+            final_staff = llm_result
+            logger.info(f"LLM found ID: {final_staff.employee_id}, Date: {final_staff.screening_date}, Score: {final_staff.overall_health_score}")
+            
+        except Exception as e:
+            logger.warning(f"Part 1 LLM Extraction failed: {e}")
+
+        # Part 2 & 3: Database Lookup and Final Merge
+        if final_staff.employee_id:
+            logger.info(f"Part 2: Fetching identity (Name, Age, Gender, Dept) from DB for ID '{final_staff.employee_id}'...")
+            db_details = staff_master_db.get_staff_details(final_staff.employee_id)
+            
+            if db_details:
+                logger.info("Part 3: Overwriting identity fields with official Database records.")
+                # PER USER REQUIREMENT: These 5 fields MUST come from DB
+                final_staff.employee_id = db_details.employee_id
+                final_staff.name = db_details.name
+                final_staff.age = db_details.age
+                final_staff.gender = db_details.gender
+                final_staff.department = db_details.department
                 
-                # Merge LLM results with Staff Master results (Staff Master takes priority)
-                if not extracted.employee_id:
-                    extracted.employee_id = llm_extracted.employee_id
-                if not extracted.name:
-                    extracted.name = llm_extracted.name
-                if not extracted.gender:
-                    extracted.gender = llm_extracted.gender
-                if not extracted.age:
-                    extracted.age = llm_extracted.age
-                if not extracted.department:
-                    extracted.department = llm_extracted.department
-                if not extracted.screening_date:
-                    extracted.screening_date = llm_extracted.screening_date
-                    
-            except (json.JSONDecodeError, ValidationError) as e:
-                logger.warning(f"Failed to parse LLM staff details: {e}")
-        
-        in_tokens, out_tokens = 0, 0  # Token usage if LLM was called
+                # NOTE: screening_date and overall_health_score are KEPT from the LLM extraction in Part 1
+                logger.info(f"Verified Identity: {final_staff.name} | Dept: {final_staff.department}")
+            else:
+                logger.warning(f"ID '{final_staff.employee_id}' not found in DB. Setting Department to 'Others'.")
+                final_staff.department = "Others"
+        else:
+            logger.warning("No Employee ID found. Setting Department to 'Others'.")
+            final_staff.department = "Others"
         
         return {
-            "staff_details": extracted,
+            "staff_details": final_staff,
             "input_tokens": in_tokens,
             "output_tokens": out_tokens
         }

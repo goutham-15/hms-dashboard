@@ -92,13 +92,14 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function initDonutChart(dist) {
+        if (!dist) dist = { 'Critical': 0, 'High Risk': 0, 'Moderate Risk': 0, 'Healthy': 0 };
         const ctx = document.getElementById('healthDonutChart').getContext('2d');
         new Chart(ctx, {
             type: 'doughnut',
             data: {
                 labels: ['Critical', 'High Risk', 'Moderate', 'Healthy'],
                 datasets: [{
-                    data: [dist['Critical'], dist['High Risk'], dist['Moderate Risk'], dist['Healthy']],
+                    data: [dist['Critical'] || 0, dist['High Risk'] || 0, dist['Moderate Risk'] || 0, dist['Healthy'] || 0],
                     backgroundColor: ['#ef4444', '#f59e0b', '#eab308', '#10b981'],
                     borderWidth: 0,
                     cutout: '75%'
@@ -112,7 +113,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
         
         // Update total in center of donut
-        const total = Object.values(dist).reduce((a, b) => a + b, 0);
+        const total = Object.values(dist).reduce((a, b) => (typeof b === 'number' ? a + b : a), 0);
         document.querySelector('.total-val').textContent = total;
 
         // Update legend values

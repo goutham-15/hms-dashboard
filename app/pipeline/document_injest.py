@@ -61,10 +61,13 @@ class DocumentIngestor:
             logger.warning("Error checking if file already processed: %s. Proceeding with processing.", e)
             return False
 
-    def process(self) -> Dict[str, Any]:
+    def process(self, skip_db: bool = False) -> Dict[str, Any]:
         """
         Executes the ingestion pipeline: OCR -> Chunking -> Vector DB insertion.
         Skips processing if file has already been processed (based on file hash).
+        
+        Args:
+            skip_db: If True, skips the final database insertion step.
         """
         logger.info("Starting processing for source_id=%s", self.source_id)
         
@@ -78,9 +81,10 @@ class DocumentIngestor:
             }
         
         # 1. OCR / Text Extraction
-        logger.info("Performing OCR on document: %s", self.file_path.name)
+        logger.info("Performing OCR on document (Docling Image Pipeline): %s", self.file_path.name)
+        from app.core.document_loader import DocumentLoader
         loader = DocumentLoader(self.file_path)
-        pages = list(loader.iter_pages_text(dpi=150))
+        pages = list(loader.iter_pages_text())
         full_text = "\n\n".join([text for _, text in pages]).strip()
         logger.info("OCR complete. Extracted %d pages, %d characters.", len(pages), len(full_text))
         
@@ -115,10 +119,21 @@ class DocumentIngestor:
         logger.info("LLM extraction complete.")
 
         # 4. Database Insertion
-        logger.info("Upserting record to database...")
-        db_manager = DatabaseManager()
-        db_manager.upsert_faculty_health_record(profile, source_id=self.source_id)
-        logger.info("Database upsert complete.")
+        if not skip_db:
+            logger.info("Upserting record to database...")
+            db_manager = DatabaseManager()
+            db_manager.upsert_faculty_health_record(profile, source_id=self.source_id)
+            logger.info("Database upsert complete.")
+            
+            # 5. Proactively update analytics cache since new data was added
+            from app.utils.analytics_utils import calculate_and_update_cache
+            try:
+                calculate_and_update_cache()
+                logger.info("Analytics cache proactively updated after ingestion.")
+            except Exception as cache_error:
+                logger.warning(f"Failed to update cache: {cache_error}")
+        else:
+            logger.info("Skipping database insertion as requested (skip_db=True).")
         
         return {
             "source_id": self.source_id,

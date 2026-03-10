@@ -60,9 +60,8 @@ class StaffDetails(BaseModel):
         "",
         description="Full name of the faculty or staff member. Extract ONLY the name part, excluding any concatenated ID."
     )
-    age: int = Field(
-        18,
-        ge=18,
+    age: Optional[int] = Field(
+        None,
         description="Age of the faculty member in completed years."
     )
     gender: Literal["Male", "Female", "Other"] | str = Field(
