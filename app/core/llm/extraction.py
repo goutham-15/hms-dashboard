@@ -1,16 +1,19 @@
 import operator
 from typing import List, TypedDict, Optional, Dict, Annotated
+import json
 
 from langchain_aws.chat_models import ChatBedrock
 from langgraph.graph import StateGraph, END
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from app.core.llm.prompts import staff_details, thyrocare_details, second_medic_details, health_inference
 from app.core.vector_db import VectorDB
 from app.models.medical_report import StaffDetails, Thyrocare, SecondMedic, FacultyHealthProfile, CostDetails
+from app.db.staff_master import StaffMasterDB
+from app.utils.logger import get_logger
 
 
-def _join_context(chunks: list[str], *, max_chars: int = 12000) -> str:
+def _join_context(chunks: list[str], *, max_chars: int = 4000) -> str:
     buf: list[str] = []
     total = 0
     for c in chunks:
@@ -120,7 +123,7 @@ class MedicalReportExtractor:
         
         return {
             "report_type_chunks": {"thyrocare": thy_docs, "second_medic": second_docs},
-            "staff_context": _join_context(staff_chunks, max_chars=6000)
+            "staff_context": _join_context(staff_chunks, max_chars=2000)
         }
 
     def _get_token_usage(self, response) -> tuple[int, int]:
@@ -131,14 +134,89 @@ class MedicalReportExtractor:
         except:
             return 0, 0
 
+    def _clean_llm_response(self, response) -> str:
+        """
+        Clean LLM response to extract only the JSON part.
+        Removes explanatory text like "Here is..." and "Note:..." that breaks JSON parsing.
+        """
+        import re
+        
+        # Get the text content from the response
+        if hasattr(response, 'content'):
+            text = response.content
+        else:
+            text = str(response)
+        
+        # Try to extract JSON from the response
+        # Look for content between first { and last }
+        json_match = re.search(r'\{.*\}', text, re.DOTALL)
+        if json_match:
+            return json_match.group(0)
+        
+        return text
+
     def extract_staff_details(self, state: GraphState) -> Dict:
         """Extracts staff details from the first pages of both reports (fallback: full text)."""
-        chain = staff_details.PROMPT | self.llm
-        context = (state.get("staff_context") or "").strip() or state["full_text"]
-        response = chain.invoke({"context": context})
+        logger = get_logger(name="extraction")
         
-        extracted = staff_details.parser.invoke(response)
-        in_tokens, out_tokens = self._get_token_usage(response)
+        # First, try to get staff details from Staff Master DB using SecondMedic first page
+        staff_master_db = StaffMasterDB()
+        
+        # Get first page of SecondMedic report for staff ID extraction
+        second_medic_chunks = state["report_type_chunks"].get("second_medic", [])
+        first_page_text = second_medic_chunks[0] if second_medic_chunks else ""
+        
+        # Try to extract and enrich from Staff Master DB
+        extracted = staff_details.StaffDetails()
+        
+        if first_page_text:
+            try:
+                staff_master_db.enrich_staff_details(extracted, first_page_text)
+                logger.info("Staff details enriched from Staff Master DB")
+            except Exception as e:
+                logger.warning(f"Failed to enrich from Staff Master DB: {e}")
+        
+        # If we still don't have key details, fall back to LLM extraction
+        if not extracted.employee_id or not extracted.name:
+            logger.info("Falling back to LLM extraction for staff details")
+            
+            chain = staff_details.PROMPT | self.llm
+            # Use staff_context if available, otherwise use limited full_text
+            context = (state.get("staff_context") or "").strip()
+            if not context:
+                # Limit full_text to first 1000 chars to avoid token limit
+                full_text = state.get("full_text", "")
+                context = full_text[:1000] if full_text else ""
+            
+            response = chain.invoke({"context": context})
+            
+            # Clean the response before parsing
+            cleaned_response_text = self._clean_llm_response(response)
+            
+            # Parse the cleaned JSON string directly
+            try:
+                # Try to parse as JSON first
+                json_data = json.loads(cleaned_response_text)
+                llm_extracted = staff_details.StaffDetails(**json_data)
+                
+                # Merge LLM results with Staff Master results (Staff Master takes priority)
+                if not extracted.employee_id:
+                    extracted.employee_id = llm_extracted.employee_id
+                if not extracted.name:
+                    extracted.name = llm_extracted.name
+                if not extracted.gender:
+                    extracted.gender = llm_extracted.gender
+                if not extracted.age:
+                    extracted.age = llm_extracted.age
+                if not extracted.department:
+                    extracted.department = llm_extracted.department
+                if not extracted.screening_date:
+                    extracted.screening_date = llm_extracted.screening_date
+                    
+            except (json.JSONDecodeError, ValidationError) as e:
+                logger.warning(f"Failed to parse LLM staff details: {e}")
+        
+        in_tokens, out_tokens = 0, 0  # Token usage if LLM was called
         
         return {
             "staff_details": extracted,
@@ -155,7 +233,17 @@ class MedicalReportExtractor:
         chain = thyrocare_details.PROMPT | self.llm
         response = chain.invoke({"context": context})
         
-        extracted = thyrocare_details.parser.invoke(response)
+        # Clean the response before parsing
+        cleaned_response_text = self._clean_llm_response(response)
+        
+        try:
+            json_data = json.loads(cleaned_response_text)
+            extracted = Thyrocare(**json_data)
+        except (json.JSONDecodeError, ValidationError) as e:
+            logger = get_logger(name="extraction")
+            logger.warning(f"Failed to parse thyrocare details: {e}. Using defaults.")
+            extracted = Thyrocare()
+        
         in_tokens, out_tokens = self._get_token_usage(response)
         
         return {
@@ -173,7 +261,17 @@ class MedicalReportExtractor:
         chain = second_medic_details.PROMPT | self.llm
         response = chain.invoke({"context": context})
         
-        extracted = second_medic_details.parser.invoke(response)
+        # Clean the response before parsing
+        cleaned_response_text = self._clean_llm_response(response)
+        
+        try:
+            json_data = json.loads(cleaned_response_text)
+            extracted = SecondMedic(**json_data)
+        except (json.JSONDecodeError, ValidationError) as e:
+            logger = get_logger(name="extraction")
+            logger.warning(f"Failed to parse secondmedic details: {e}. Using defaults.")
+            extracted = SecondMedic()
+        
         in_tokens, out_tokens = self._get_token_usage(response)
         
         return {
@@ -195,7 +293,22 @@ class MedicalReportExtractor:
             "staff_details_json": staff.model_dump_json()
         })
         
-        result = health_inference.parser.invoke(response)
+        # Clean the response before parsing
+        cleaned_response_text = self._clean_llm_response(response)
+        
+        try:
+            result = json.loads(cleaned_response_text)
+        except json.JSONDecodeError as e:
+            logger = get_logger(name="extraction")
+            logger.warning(f"Failed to parse health inference: {e}. Using defaults.")
+            result = {
+                "inference": "",
+                "active_flags": [],
+                "status": "Unknown",
+                "suggestion": [],
+                "overall_health_score": 0
+            }
+        
         in_tokens, out_tokens = self._get_token_usage(response)
         
         return {

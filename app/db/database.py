@@ -113,6 +113,8 @@ class DatabaseManager:
             profile: FacultyHealthProfile object with extracted data
             source_id: Optional source_id from document processing (used as fallback if employee_id is missing)
         """
+        from app.db.staff_master import StaffMasterDB
+        
         staff = profile.staff_details
         
         # Parse date with robust handling
@@ -122,6 +124,22 @@ class DatabaseManager:
         # This ensures each unique document gets its own record
         employee_id = staff.employee_id if staff.employee_id and staff.employee_id.strip() else (source_id or "UNKNOWN")
         
+        # Fetch proper department from Staff Master DB if we have a valid employee_id
+        department = staff.department or "STAFF"  # Default fallback
+        
+        if employee_id and employee_id != "UNKNOWN":
+            try:
+                staff_master_db = StaffMasterDB()
+                staff_master_data = staff_master_db.get_staff_details(employee_id)
+                
+                if staff_master_data and staff_master_data.get('Department'):
+                    department = staff_master_data['Department']
+                    logger.info(f"Updated department from Staff Master DB: {department}")
+                else:
+                    logger.warning(f"No department found in Staff Master DB for {employee_id}")
+            except Exception as e:
+                logger.warning(f"Failed to fetch department from Staff Master DB: {e}")
+        
         record_id = self._generate_hash_id(employee_id, year)
         
         # Prepare data - manually serialize JSON for SQL Server nvarchar(max) columns
@@ -129,7 +147,7 @@ class DatabaseManager:
             "name": staff.name,
             "age": staff.age,
             "gender": staff.gender,
-            "department": staff.department or "STAFF", # Using "STAFF" as a generic fallback if inference fails
+            "department": department,  # Use the department from Staff Master DB
             "screening_date": screening_datetime.date(),
             "health_score": staff.overall_health_score or 0,
             "status": profile.status,
