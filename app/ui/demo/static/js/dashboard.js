@@ -269,12 +269,14 @@ document.addEventListener('DOMContentLoaded', function() {
         modal.style.display = 'flex';
 
         try {
-            // Fetch the specific record (assuming the endpoint supports query by ID or we filter from all)
-            const res = await fetch(`/api/v1/analytics/records`);
-            const records = await res.json();
-            const record = records.find(r => r.id === recordId);
+            // Fetch the specific record by ID
+            const res = await fetch(`/api/v1/analytics/record/${recordId}`);
+            if (!res.ok) {
+                throw new Error(`Failed to fetch record: ${res.status}`);
+            }
+            const record = await res.json();
 
-            if (!record) {
+            if (!record || !record.id) {
                 modalBody.innerHTML = '<div class="error">Record not found.</div>';
                 return;
             }

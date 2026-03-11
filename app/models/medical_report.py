@@ -61,8 +61,8 @@ class StaffDetails(BaseModel):
         description="Full name of the faculty or staff member. Extract ONLY the name part, excluding any concatenated ID."
     )
     age: Optional[int] = Field(
-        None,
-        description="Age of the faculty member in completed years."
+        0,
+        description="Age of the faculty member in completed years. Defaults to 0 if not found."
     )
     gender: Literal["Male", "Female", "Other"] | str = Field(
         "",
@@ -88,6 +88,15 @@ class StaffDetails(BaseModel):
     def uppercase_strings(cls, v: str) -> str:
         if isinstance(v, str):
             return v.upper()
+        return v
+    
+    @field_validator("age", mode="after")
+    @classmethod
+    def validate_age(cls, v: Optional[int]) -> int:
+        """Ensure age is never None, default to 0 if missing."""
+        if v is None or v < 0:
+            return 0
+        return v
         return v
 
 
@@ -177,8 +186,8 @@ class FacultyHealthProfile(BaseModel):
         "Moderate Risk",
         "Healthy",
     ] | str = Field(
-        "",
-        description="Overall health risk category derived from all available data."
+        "Healthy",
+        description="Overall health risk category derived from all available data. Defaults to 'Healthy' if not determined."
     )
 
     suggestion: List[str] = Field(

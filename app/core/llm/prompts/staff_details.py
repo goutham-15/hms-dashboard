@@ -40,9 +40,17 @@ CRITICAL REQUIREMENTS:
    - If the date is incomplete or unclear, use "2026-01-01" as a fallback
 
 5. **JSON OUTPUT**: Return ONLY valid JSON without any comments, explanations, or additional text
-   - DO NOT include comments like "// inferred from..." in the JSON output
-   - DO NOT add any text before or after the JSON
-   - DO NOT add "Note:" or explanations after the JSON
+   - DO NOT include comments like "// inferred from..." or "// Not explicitly mentioned" in the JSON output
+   - DO NOT add any text before or after the JSON (no "Based on...", no "Note:", no explanations)
+   - DO NOT use JavaScript-style comments (//) in JSON - they are invalid
+   - Return ONLY the raw JSON object starting with {{ and ending with }}
+   - Example of CORRECT output: {{"employee_id": "SITT12IT01", "name": "JOHN DOE", ...}}
+   - Example of WRONG output: Based on the context... ```json {{"employee_id": "...", // comment}} ```
+
+6. **OCR CORRECTIONS**: The text may contain OCR errors. Apply common corrections:
+   - "SITT1OCOO1" should be "SITT10CO01" (zero vs letter O confusion)
+   - "SITT1" at start should likely be "SITT1" followed by a digit
+   - Common OCR errors: O/0 (letter O vs zero), I/1 (letter I vs one), S/5, etc.
 
 Format Instructions:
 {format_instructions}

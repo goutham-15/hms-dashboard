@@ -7,7 +7,7 @@ This script uses the DocumentIngestor pipeline to:
 3. Store in Vector DB
 4. Extract medical information using LLM
 5. Insert into SQL database
-6. Clear Redis cache
+6. Update Redis analytics cache
 """
 
 import argparse
@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 from app.pipeline.document_injest import DocumentIngestor
 from app.utils.redis_client import RedisClient
+from app.utils.analytics_utils import calculate_and_update_cache
 from app.utils.logger import get_logger
 
 logger = get_logger(name="ingest_samples")
@@ -22,7 +23,7 @@ logger = get_logger(name="ingest_samples")
 # Default sample directory
 SAMPLES_DIR = Path("/Users/103501/Desktop/Projects/hms-dashboard/sample")
 
-def process_file(pdf_path: Path, redis_client: RedisClient) -> bool:
+def process_file(pdf_path: Path, skip_if_exists: bool = True) -> dict:
     """Process a single PDF file."""
     print(f"\n{'='*60}")
     print(f"Processing: {pdf_path.name}")
@@ -30,27 +31,29 @@ def process_file(pdf_path: Path, redis_client: RedisClient) -> bool:
     
     try:
         # Initialize the ingestor
-        ingestor = DocumentIngestor(pdf_path)
+        ingestor = DocumentIngestor(pdf_path, skip_if_exists=skip_if_exists)
         
-        # Run the full pipeline
+        # Run the full pipeline (includes DB insertion and cache update)
         result = ingestor.process()
+        
+        # Check if file was skipped
+        if result.get('status') == 'skipped':
+            print(f"⊘ Skipped {pdf_path.name} - {result.get('reason', 'Already processed')}")
+            print(f"  Source ID: {result['source_id']}")
+            return {'success': True, 'skipped': True}
         
         print(f"✓ Successfully processed {pdf_path.name}")
         print(f"  Source ID: {result['source_id']}")
         print(f"  Pages extracted: {len(result.get('chunks', []))}")
         print(f"  Vector DB collection: {result.get('vector_db_collection')}")
         
-        # Clear Redis cache since we added new data
-        cleared = redis_client.clear_pattern("analytics:*")
-        print(f"  Cache cleared: {cleared} keys")
-        
-        return True
+        return {'success': True, 'skipped': False}
         
     except Exception as e:
         print(f"✗ Error processing {pdf_path.name}")
         print(f"  Error: {str(e)}")
         logger.exception(f"Failed to process {pdf_path.name}")
-        return False
+        return {'success': False, 'skipped': False}
 
 
 def main():
@@ -73,6 +76,11 @@ def main():
         "--all",
         action="store_true",
         help="Process all PDF files in the sample directory."
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force reprocessing of files even if they already exist."
     )
     
     args = parser.parse_args()
@@ -125,6 +133,7 @@ def main():
         print("No input files specified.")
         print("\nUsage:")
         print("  python ingest_samples.py --all                    # Process all PDFs in sample/")
+        print("  python ingest_samples.py --all --force            # Reprocess all PDFs (ignore cache)")
         print("  python ingest_samples.py --filename sample.pdf    # Process specific file")
         print("  python ingest_samples.py file1.pdf file2.pdf      # Process multiple files")
         return 1
@@ -136,14 +145,25 @@ def main():
     # Process each file
     print(f"\n{'='*60}")
     print(f"Starting ingestion of {len(pdf_files)} file(s)")
+    if args.force:
+        print("Force mode: Will reprocess all files")
+    else:
+        print("Smart mode: Will skip already processed files")
     print('='*60)
     
     success_count = 0
     failed_count = 0
+    skipped_count = 0
     
     for pdf_path in pdf_files:
-        if process_file(pdf_path, redis_client):
-            success_count += 1
+        # Process with skip_if_exists based on --force flag
+        result = process_file(pdf_path, skip_if_exists=not args.force)
+        
+        if result['success']:
+            if result['skipped']:
+                skipped_count += 1
+            else:
+                success_count += 1
         else:
             failed_count += 1
     
@@ -152,17 +172,32 @@ def main():
     print("Ingestion Summary")
     print('='*60)
     print(f"  Total files: {len(pdf_files)}")
-    print(f"  Successful: {success_count}")
+    print(f"  Processed: {success_count}")
+    print(f"  Skipped: {skipped_count}")
     print(f"  Failed: {failed_count}")
     print('='*60)
     
+    # Rebuild analytics cache if any files were processed
     if success_count > 0:
-        print("\n✓ Data has been inserted into the database!")
-        print("  You can now test the caching:")
-        print("    curl http://localhost:8001/api/v1/analytics/summary")
-        print("    curl http://localhost:8001/api/v1/analytics/records")
-        print("  Or view in browser:")
-        print("    http://localhost:8001/demo")
+        print("\n🔄 Rebuilding analytics cache...")
+        try:
+            cache_updated = calculate_and_update_cache()
+            if cache_updated:
+                print("✓ Analytics cache successfully updated!")
+            else:
+                print("⚠️  Cache update returned False - check logs")
+        except Exception as e:
+            print(f"✗ Failed to update cache: {e}")
+            logger.exception("Cache update failed")
+    
+    if success_count > 0 or skipped_count > 0:
+        print("\n✓ Data is ready in the database!")
+        print("  Start the server with:")
+        print("    python start_server.py")
+        print("\n  Then access:")
+        print("    http://localhost:8001/demo          (Dashboard)")
+        print("    http://localhost:8001/api/v1/analytics/summary")
+        print("    http://localhost:8001/api/v1/analytics/records")
     
     return 0 if failed_count == 0 else 1
 

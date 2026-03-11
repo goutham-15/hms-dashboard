@@ -142,19 +142,33 @@ class DatabaseManager:
         
         record_id = self._generate_hash_id(employee_id, year)
         
+        # Validate and provide defaults for required fields
+        name = staff.name.strip() if staff.name and staff.name.strip() else "UNKNOWN"
+        age = staff.age if staff.age is not None and staff.age > 0 else 0
+        gender = staff.gender.strip() if staff.gender and staff.gender.strip() else "UNKNOWN"
+        status = profile.status.strip() if profile.status and profile.status.strip() else "Healthy"
+        
+        # Log warning if critical fields are missing
+        if age == 0:
+            logger.warning(f"Age not extracted for {employee_id}, using default: 0")
+        if name == "UNKNOWN":
+            logger.warning(f"Name not extracted for {employee_id}, using default: UNKNOWN")
+        if gender == "UNKNOWN":
+            logger.warning(f"Gender not extracted for {employee_id}, using default: UNKNOWN")
+        
         # Prepare data - manually serialize JSON for SQL Server nvarchar(max) columns
         record_data = {
-            "name": staff.name,
-            "age": staff.age,
-            "gender": staff.gender,
+            "name": name,
+            "age": age,
+            "gender": gender,
             "department": department,  # Use the department from Staff Master DB
             "screening_date": screening_datetime.date(),
             "health_score": staff.overall_health_score or 0,
-            "status": profile.status,
+            "status": status,
             "active_flags": json.dumps(profile.active_flags, cls=DecimalEncoder),
             "thyrocare_results": json.dumps(profile.thyrocare.model_dump(), cls=DecimalEncoder),
             "secondmedic_results": json.dumps(profile.secondmedic.model_dump(), cls=DecimalEncoder),
-            "inference": profile.inference,
+            "inference": profile.inference or "",
             "suggestion": json.dumps(profile.suggestion, cls=DecimalEncoder),
             "cost": json.dumps(profile.cost.model_dump(), cls=DecimalEncoder) # Entire cost JSON
         }
@@ -200,6 +214,7 @@ class DatabaseManager:
             result = []
             for r in records:
                 result.append({
+                    "id": r.id,
                     "employee_id": r.employee_id,
                     "name": r.name,
                     "age": r.age,

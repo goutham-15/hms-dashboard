@@ -125,13 +125,8 @@ class DocumentIngestor:
             db_manager.upsert_faculty_health_record(profile, source_id=self.source_id)
             logger.info("Database upsert complete.")
             
-            # 5. Proactively update analytics cache since new data was added
-            from app.utils.analytics_utils import calculate_and_update_cache
-            try:
-                calculate_and_update_cache()
-                logger.info("Analytics cache proactively updated after ingestion.")
-            except Exception as cache_error:
-                logger.warning(f"Failed to update cache: {cache_error}")
+            # Note: Cache update is handled by the caller (upload endpoint or batch script)
+            # to avoid redundant updates when processing multiple files
         else:
             logger.info("Skipping database insertion as requested (skip_db=True).")
         

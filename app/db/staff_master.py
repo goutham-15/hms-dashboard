@@ -20,7 +20,7 @@ class StaffMasterDB:
         self.username = "SECEdumateSP38"
         self.password = "$a!ra#MsM38EdUmAt3sP"
         self.database = "SAIRAMEC_EDUMATE"
-        self.driver = "{ODBC Driver 18 for SQL Server}"
+        self.driver = "{ODBC Driver 17 for SQL Server}"
         
     def _get_connection(self):
         """Create database connection."""

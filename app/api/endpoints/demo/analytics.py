@@ -70,6 +70,20 @@ async def get_records(query: Optional[str] = None):
     
     return all_records
 
+@router.get("/record/{record_id}")
+async def get_record_by_id(record_id: str):
+    """Get a single record by ID from cache."""
+    all_records = get_from_cache("analytics:all_records", default_value=[])
+    
+    # Find the record with matching ID
+    for record in all_records:
+        if str(record.get("id")) == str(record_id):
+            return record
+    
+    # If not found, return error
+    logger.warning(f"Record with ID {record_id} not found in cache")
+    return {"error": "Record not found", "id": record_id}
+
 @router.get("/export")
 async def export_excel():
     """Export data using the cached records."""

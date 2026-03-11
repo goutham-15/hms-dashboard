@@ -135,7 +135,7 @@ class MedicalReportExtractor:
     def _clean_llm_response(self, response) -> str:
         """
         Clean LLM response to extract only the JSON part.
-        Removes explanatory text like "Here is..." and "Note:..." that breaks JSON parsing.
+        Removes explanatory text, code blocks, and JavaScript-style comments that break JSON parsing.
         """
         import re
         
@@ -145,22 +145,41 @@ class MedicalReportExtractor:
         else:
             text = str(response)
         
+        # Remove markdown code blocks if present
+        text = re.sub(r'```json\s*', '', text)
+        text = re.sub(r'```\s*', '', text)
+        
         # Try to extract JSON from the response
         # Look for content between first { and last }
         json_match = re.search(r'\{.*\}', text, re.DOTALL)
         if json_match:
-            return json_match.group(0)
+            json_str = json_match.group(0)
+            
+            # Remove JavaScript-style comments (// ...) that break JSON
+            # This handles both inline and end-of-line comments
+            json_str = re.sub(r'//[^\n]*', '', json_str)
+            
+            # Remove multi-line comments (/* ... */)
+            json_str = re.sub(r'/\*.*?\*/', '', json_str, flags=re.DOTALL)
+            
+            # Clean up any trailing commas before closing braces/brackets
+            json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
+            
+            return json_str
         
         return text
 
     def extract_staff_details(self, state: GraphState) -> Dict:
         """
         Extracts staff details in 3 parts:
-        1. Extract staff ID and report data (screening date, score) from the first chunk using LLM.
-        2. Get staff details (Name, Age, Gender, Dept) from the staff_master table.
-        3. Fill and merge details: Identity from DB, Screening info from LLM.
+        1. Extract staff ID, name, age, gender, screening date from document using REGEX (not LLM).
+        2. Get department from the staff_master table using the extracted ID.
+        3. Return the complete staff details.
         """
         logger = get_logger(name="extraction")
+        from app.core.regex_extraction import extract_staff_details_from_text
+        from app.db.staff_master import StaffMasterDB
+        
         staff_master_db = StaffMasterDB()
         
         # Context: First chunk of SecondMedic report (per requirement)
@@ -169,43 +188,18 @@ class MedicalReportExtractor:
             full_text = state.get("full_text", "")
             context = full_text[:2000] if full_text else ""
             
-        # Part 1: LLM Extraction (Identity + Screening Info)
-        logger.info("Part 1: LLM extracting ID and screening info from document...")
-        chain = staff_details.PROMPT | self.llm
-        in_tokens, out_tokens = 0, 0
-        final_staff = StaffDetails()
+        # Part 1: REGEX Extraction (Identity + Screening Info)
+        logger.info("Part 1: REGEX extracting ID, name, age, gender, date from document...")
+        final_staff = extract_staff_details_from_text(context)
         
-        try:
-            response = chain.invoke({"context": context})
-            in_tokens, out_tokens = self._get_token_usage(response)
-            
-            cleaned_response = self._clean_llm_response(response)
-            json_data = json.loads(cleaned_response)
-            llm_result = StaffDetails(**json_data)
-            
-            # Initial values from LLM
-            final_staff = llm_result
-            logger.info(f"LLM found ID: {final_staff.employee_id}, Date: {final_staff.screening_date}, Score: {final_staff.overall_health_score}")
-            
-        except Exception as e:
-            logger.warning(f"Part 1 LLM Extraction failed: {e}")
-
-        # Part 2 & 3: Database Lookup and Final Merge
+        # Part 2: Database Lookup for Department
         if final_staff.employee_id:
-            logger.info(f"Part 2: Fetching identity (Name, Age, Gender, Dept) from DB for ID '{final_staff.employee_id}'...")
+            logger.info(f"Part 2: Fetching department from Staff Master DB for ID '{final_staff.employee_id}'...")
             db_details = staff_master_db.get_staff_details(final_staff.employee_id)
             
-            if db_details:
-                logger.info("Part 3: Overwriting identity fields with official Database records.")
-                # PER USER REQUIREMENT: These 5 fields MUST come from DB
-                final_staff.employee_id = db_details.employee_id
-                final_staff.name = db_details.name
-                final_staff.age = db_details.age
-                final_staff.gender = db_details.gender
+            if db_details and db_details.department:
                 final_staff.department = db_details.department
-                
-                # NOTE: screening_date and overall_health_score are KEPT from the LLM extraction in Part 1
-                logger.info(f"Verified Identity: {final_staff.name} | Dept: {final_staff.department}")
+                logger.info(f"Department from DB: {final_staff.department}")
             else:
                 logger.warning(f"ID '{final_staff.employee_id}' not found in DB. Setting Department to 'Others'.")
                 final_staff.department = "Others"
@@ -213,10 +207,12 @@ class MedicalReportExtractor:
             logger.warning("No Employee ID found. Setting Department to 'Others'.")
             final_staff.department = "Others"
         
+        logger.info(f"Final Staff Details: {final_staff.employee_id} | {final_staff.name} | {final_staff.age} | {final_staff.gender} | {final_staff.department}")
+        
         return {
             "staff_details": final_staff,
-            "input_tokens": in_tokens,
-            "output_tokens": out_tokens
+            "input_tokens": 0,  # No LLM used for staff extraction
+            "output_tokens": 0
         }
 
     def extract_thyrocare_details(self, state: GraphState) -> Dict:
