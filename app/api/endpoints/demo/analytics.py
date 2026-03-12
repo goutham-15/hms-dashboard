@@ -9,6 +9,7 @@ import io
 
 from app.utils.redis_client import RedisClient
 from app.utils.logger import get_logger
+from app.utils.analytics_utils import calculate_and_update_cache
 
 router = APIRouter()
 logger = get_logger(name="analytics")
@@ -23,39 +24,44 @@ def get_redis_client():
         _redis_client = RedisClient()
     return _redis_client
 
-def get_from_cache(key: str, default_value: any = None):
+def get_from_cache_or_db(key: str, default_value: any = None):
     """
-    Get data strictly from Redis. No DB fallback.
+    Get data from cache; on miss, fetch from DB, store in cache, then return.
+    Ensures data is never missed due to cache being empty.
     """
     redis_client = get_redis_client()
     data = redis_client.get(key)
     if data is not None:
         return data
-    
-    logger.warning(f"Cache MISS for {key}. No data returned as fallback is disabled.")
+
+    logger.info(f"Cache MISS for {key}. Fetching from DB and populating cache.")
+    if calculate_and_update_cache():
+        data = redis_client.get(key)
+        if data is not None:
+            return data
     return default_value
 
 @router.get("/summary")
 async def get_summary():
-    """Get summary statistics (Source: Cache only)."""
-    return get_from_cache("analytics:summary", default_value={
+    """Get summary statistics (cache with DB fallback on miss)."""
+    return get_from_cache_or_db("analytics:summary", default_value={
         "total_faculty": 0, "critical": 0, "high_risk": 0, "moderate": 0, "healthy": 0, "avg_health_score": 0
     })
 
 @router.get("/stats")
 async def get_stats():
-    """Get detailed statistics (Source: Cache only)."""
-    return get_from_cache("analytics:stats", default_value={})
+    """Get detailed statistics (cache with DB fallback on miss)."""
+    return get_from_cache_or_db("analytics:stats", default_value={})
 
 @router.get("/alerts")
 async def get_alerts():
-    """Get critical alerts (Source: Cache only)."""
-    return get_from_cache("analytics:alerts", default_value=[])
+    """Get critical alerts (cache with DB fallback on miss)."""
+    return get_from_cache_or_db("analytics:alerts", default_value=[])
 
 @router.get("/records")
 async def get_records(query: Optional[str] = None):
     """Get all records or search within cached records."""
-    all_records = get_from_cache("analytics:all_records", default_value=[])
+    all_records = get_from_cache_or_db("analytics:all_records", default_value=[])
     
     if query and all_records:
         # Search by filtering the cached list instead of querying DB
@@ -72,8 +78,8 @@ async def get_records(query: Optional[str] = None):
 
 @router.get("/record/{record_id}")
 async def get_record_by_id(record_id: str):
-    """Get a single record by ID from cache."""
-    all_records = get_from_cache("analytics:all_records", default_value=[])
+    """Get a single record by ID (cache with DB fallback on miss)."""
+    all_records = get_from_cache_or_db("analytics:all_records", default_value=[])
     
     # Find the record with matching ID
     for record in all_records:
@@ -81,13 +87,13 @@ async def get_record_by_id(record_id: str):
             return record
     
     # If not found, return error
-    logger.warning(f"Record with ID {record_id} not found in cache")
+    logger.warning(f"Record with ID {record_id} not found")
     return {"error": "Record not found", "id": record_id}
 
 @router.get("/export")
 async def export_excel():
     """Export data using the cached records."""
-    data = get_from_cache("analytics:all_records", default_value=[])
+    data = get_from_cache_or_db("analytics:all_records", default_value=[])
     if not data:
         return {"error": "No cached data available to export"}
     
