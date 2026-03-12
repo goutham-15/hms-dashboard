@@ -1,10 +1,31 @@
 import json
+import decimal
+from datetime import date, datetime
 import redis
 from typing import Optional, Any
 from app.utils.config import settings
 from app.utils.logger import get_logger
 
 logger = get_logger(name="redis_client")
+
+
+class _JsonEncoder(json.JSONEncoder):
+    """Encode Decimal and date/datetime so cache values are always JSON-serializable."""
+
+    def default(self, obj):
+        if isinstance(obj, decimal.Decimal):
+            return float(obj)
+        if isinstance(obj, (date, datetime)):
+            return obj.isoformat()
+        return super().default(obj)
+
+
+def _json_dumps(value: Any) -> str:
+    return json.dumps(value, cls=_JsonEncoder)
+
+
+def _json_loads(s: str) -> Any:
+    return json.loads(s)
 
 
 class RedisClient:
@@ -25,19 +46,19 @@ class RedisClient:
             value = self.client.get(key)
             if value:
                 logger.info(f"Cache HIT: {key}")
-                return json.loads(value)
+                return _json_loads(value)
             logger.info(f"Cache MISS: {key}")
             return None
         except Exception as e:
             logger.error(f"Redis GET error for key {key}: {e}")
             return None
-    
+
     def set(self, key: str, value: Any, ttl: Optional[int] = None) -> bool:
-        """Set value in cache with JSON serialization."""
+        """Set value in cache with JSON serialization (handles Decimal, date, datetime)."""
         try:
-            serialized = json.dumps(value)
+            serialized = _json_dumps(value)
             ttl = ttl if ttl is not None else self.default_ttl
-            
+
             if ttl > 0:
                 self.client.setex(key, ttl, serialized)
                 logger.info(f"Cache SET: {key} (TTL: {ttl}s)")

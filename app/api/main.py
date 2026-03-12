@@ -1,5 +1,6 @@
 from datetime import datetime
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -7,6 +8,7 @@ from pydantic import BaseModel
 
 from app.api.endpoints import upload
 from app.api.endpoints.demo import analytics
+from app.api.endpoints import dashboard, faculty, analytics_disease, filters
 from app.utils.logger import get_logger
 
 logger = get_logger(name="api")
@@ -15,6 +17,15 @@ app = FastAPI(
     title="HMS Medical Report API",
     description="API for processing and extracting medical reports",
     version="1.0.0"
+)
+
+# Allow UI at http://localhost:5173 (e.g. Vite dev server) to call the API
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Setup templates and static files
@@ -60,6 +71,12 @@ async def demo(request: Request):
 # Include routers
 app.include_router(upload.router, prefix="/extract")
 app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["Analytics"])
+
+# Canonical API (BACKEND_API_TASKS.md)
+app.include_router(dashboard.router, prefix="/api/dashboard", tags=["Dashboard"])
+app.include_router(faculty.router, prefix="/api/faculty", tags=["Faculty"])
+app.include_router(analytics_disease.router, prefix="/api/analytics", tags=["Analytics"])
+app.include_router(filters.router, prefix="/api/filters", tags=["Filters"])
 
 # Import and include cache router
 from app.api.endpoints import cache
