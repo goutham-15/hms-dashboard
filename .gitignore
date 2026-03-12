@@ -230,3 +230,7 @@ tests/_outputs/
 
 # Persistent ChromaDB (vectors)
 vector_store/
+sample/combined.pdf
+sample/second_medic.pdf
+sample/second_medic.txt
+sample/thyrocare.pdf
