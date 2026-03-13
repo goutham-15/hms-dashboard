@@ -113,3 +113,51 @@ async def export_dashboard(
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="departments-export.csv"'},
     )
+
+
+@router.get("/export-csv")
+async def export_dashboard_csv():
+    """
+    Executive Summary: Export CSV
+
+    GET /api/dashboard/export-csv
+    Exports the institutional health scorecard by department.
+    """
+    summary = get_summary()
+    stats = get_stats()
+    dept_dist = stats.get("department_distribution") or {}
+
+    rows = []
+    for dept, counts in dept_dist.items():
+        total = counts.get("total", 0)
+        critical = counts.get("Critical", 0)
+        high_risk = counts.get("High Risk", 0)
+        moderate = counts.get("Moderate Risk", 0)
+        healthy = counts.get("Healthy", 0)
+        avg_score = summary.get("avg_health_score") or 0
+        top_risk = "Critical" if critical else ("High Risk" if high_risk else ("Moderate Risk" if moderate else "Healthy"))
+        rows.append(
+            {
+                "Department": dept or "",
+                "Total Faculty": total,
+                "Critical Cases": critical,
+                "High Risk Cases": high_risk,
+                "Moderate Risk Cases": moderate,
+                "Healthy Cases": healthy,
+                "Average Health Score": avg_score,
+                "Top Risk Factor": top_risk,
+                "Screening Completion %": "100" if total else "0",
+            }
+        )
+
+    output = io.StringIO()
+    if rows:
+        writer = csv.DictWriter(output, fieldnames=rows[0].keys())
+        writer.writeheader()
+        writer.writerows(rows)
+
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="executive_summary_scorecard.csv"'},
+    )
