@@ -26,5 +26,6 @@ celery_app.conf.update(
     accept_content=["json"],
     timezone="UTC",
     enable_utc=True,
+    result_expires=3600, # Results expire after 1 hour
 )
 

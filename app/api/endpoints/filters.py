@@ -42,7 +42,7 @@ async def get_filter_options():
     Return options for filter dropdowns. Fetches available data from DB,
     caches result in Redis, then returns. Cache is cleared when data is updated.
     """
-    cached = get_cached(_API_PATH_FILTERS, {})
+    cached = await get_cached(_API_PATH_FILTERS, {})
     if cached is not None:
         return cached
 
@@ -55,5 +55,5 @@ async def get_filter_options():
             "age_ranges": list(AGE_RANGES),
             "risk_levels": list(RISK_LEVELS),
         }
-    set_cached(_API_PATH_FILTERS, {}, data)
+    await set_cached(_API_PATH_FILTERS, {}, data)
     return data

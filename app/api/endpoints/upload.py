@@ -1,12 +1,15 @@
 from pathlib import Path
 from uuid import uuid4
+from typing import Optional, Any
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, UploadFile, Query
+from pydantic import BaseModel
 from celery.result import AsyncResult
 
 from app.celery_app import celery_app
 from app.tasks.upload_tasks import process_pdf_upload_task
 from app.utils.logger import get_logger
+from app.utils.redis_client import RedisClient
 
 
 logger = get_logger(name="api_upload")
@@ -48,6 +51,7 @@ async def extract_upload_pdf(
     uploads_dir = Path("logs/uploads")
     uploads_dir.mkdir(parents=True, exist_ok=True)
     tasks: list[dict[str, str]] = []
+    rc = RedisClient()
 
     for upload_file in to_process:
         source_id = uuid4().hex[:12]
@@ -64,6 +68,10 @@ async def extract_upload_pdf(
                 upload_file.filename,
                 source_id,
             )
+            
+            # Persistent mapping for filenames - our primary tracking for "ALL" tasks
+            await rc.set(f"task_filename:{async_result.id}", upload_file.filename, ttl=3600)
+
             tasks.append(
                 {
                     "task_id": async_result.id,
@@ -96,24 +104,106 @@ async def extract_upload_pdf(
     }
 
 
-@router.get("/status/{task_id}", tags=["Extraction"])
-def upload_status(task_id: str):
-    """
-    Check background extraction status for a previously enqueued upload.
-    """
-    result = AsyncResult(task_id, app=celery_app)
+class BulkStatusRequest(BaseModel):
+    task_ids: list[str]
 
-    response: dict[str, object] = {
-        "task_id": task_id,
-        "state": result.state,
-        "ready": result.ready(),
-        "successful": result.successful() if result.ready() else None,
+
+@router.post("/status", tags=["Extraction"])
+async def upload_status_bulk(request: BulkStatusRequest):
+    """
+    Check status for multiple tasks at once.
+    Pass a JSON body like: {"task_ids": ["id1", "id2", ...]}
+    """
+    results = []
+    rc = RedisClient()
+    for task_id in request.task_ids:
+        res = AsyncResult(task_id, app=celery_app)
+        filename = await rc.get(f"task_filename:{task_id}")
+        
+        status_info = {
+            "task_id": task_id,
+            "state": res.state,
+            "ready": res.ready(),
+            "successful": res.successful() if res.ready() else None,
+            "filename": filename or "unknown"
+        }
+        if res.failed():
+            status_info["error"] = str(res.result) if res.result is not None else "Task failed"
+        elif res.successful():
+            status_info["result"] = res.result
+            
+        results.append(status_info)
+        
+    return {
+        "total": len(results),
+        "tasks": results
     }
 
-    if result.failed():
-        err = result.result
-        response["error"] = str(err) if err is not None else "Task failed"
-    elif result.successful():
-        response["result"] = result.result
 
-    return response
+@router.get("/status", tags=["Extraction"])
+async def upload_status(task_id: Optional[str] = Query(None, description="Optional: Check a specific task ID")):
+    """
+    Check status of files. 
+    - If **task_id** is provided, returns that specific task.
+    - If no **task_id** is provided, returns status of ALL current and recent tasks.
+    """
+    import redis
+    from app.utils.config import settings
+    # We use sync redis here for scanning keys efficiently
+    r_sync = redis.Redis(host=settings.redis.host, port=settings.redis.port, db=settings.redis.db, decode_responses=True)
+    rc_async = RedisClient()
+
+    if task_id:
+        result = AsyncResult(task_id, app=celery_app)
+        filename = await rc_async.get(f"task_filename:{task_id}")
+        
+        response = {
+            "task_id": task_id,
+            "state": result.state,
+            "ready": result.ready(),
+            "successful": result.successful() if result.ready() else None,
+            "filename": filename or "unknown"
+        }
+            
+        if result.failed():
+            response["error"] = str(result.result) if result.result is not None else "Task failed"
+        elif result.successful():
+            response["result"] = result.result
+        return response
+
+    # No task_id: Find all tasks we've tracked in Redis via 'task_filename:'
+    tasks = []
+    filename_keys = r_sync.keys("task_filename:*")
+    
+    for key in filename_keys:
+        tid = key.replace("task_filename:", "")
+        filename = r_sync.get(key)
+        
+        res = AsyncResult(tid, app=celery_app)
+        
+        # Determine actual state
+        # Celery returns PENDING for both truly pending and unknown IDs.
+        # But since we found the ID in our task_filename map, it's a real task.
+        state = res.state
+        
+        task_info = {
+            "task_id": tid,
+            "state": state,
+            "filename": filename,
+            "ready": res.ready(),
+            "successful": res.successful() if res.ready() else None,
+        }
+        
+        # Include result/error if finished
+        if res.ready():
+            if res.successful():
+                task_info["result"] = res.result
+            else:
+                task_info["error"] = str(res.result) if res.result is not None else "Task failed"
+                
+        tasks.append(task_info)
+
+    return {
+        "total": len(tasks),
+        "tasks": tasks
+    }

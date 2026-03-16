@@ -116,7 +116,7 @@ def compute_analytics_from_records(data: list) -> tuple[dict, dict, list]:
     return summary, stats, alerts[:10]
 
 
-def calculate_and_update_cache():
+async def calculate_and_update_cache():
     """
     Main function to compute all analytics data and store in Redis.
     This should be called after every new document upload/ingestion.
@@ -146,26 +146,26 @@ def calculate_and_update_cache():
         logger.error("Failed to normalize records for cache: %s", e)
         return False
 
-    if not redis_client.set("analytics:all_records", data, ttl=0):
+    if not await redis_client.set("analytics:all_records", data, ttl=0):
         logger.warning("Cache not stored: Redis set failed for analytics:all_records")
         return False
 
     summary, stats, alerts = compute_analytics_from_records(data)
 
-    if not redis_client.set("analytics:summary", summary, ttl=0):
+    if not await redis_client.set("analytics:summary", summary, ttl=0):
         logger.warning("Cache not stored: Redis set failed for analytics:summary")
         return False
-    if not redis_client.set("analytics:stats", stats, ttl=0):
+    if not await redis_client.set("analytics:stats", stats, ttl=0):
         logger.warning("Cache not stored: Redis set failed for analytics:stats")
         return False
-    if not redis_client.set("analytics:alerts", alerts, ttl=0):
+    if not await redis_client.set("analytics:alerts", alerts, ttl=0):
         logger.warning("Cache not stored: Redis set failed for analytics:alerts")
         return False
 
     logger.info("Proactive analytics cache update complete.")
     try:
         from app.utils.api_cache import clear_api_cache
-        clear_api_cache()
+        await clear_api_cache()
     except Exception as e:
         logger.warning("Failed to clear API response cache after analytics update: %s", e)
     return True

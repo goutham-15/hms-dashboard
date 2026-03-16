@@ -30,7 +30,7 @@ _API_PATH_FACULTY_FLAGGED = "faculty/flagged"
 _API_PATH_FACULTY_ID = "faculty/id"
 
 
-def _list_response(
+async def _list_response(
     search: Optional[str] = None,
     department: Optional[List[str]] = None,
     age_range: Optional[str] = None,
@@ -41,7 +41,7 @@ def _list_response(
     limit: int = DEFAULT_LIMIT,
     flagged_only: bool = False,
 ) -> StaffListResponse:
-    records = get_all_records()
+    records = await get_all_records()
     filtered = filter_faculty(
         records,
         search=search,
@@ -88,10 +88,10 @@ async def list_faculty(
 ):
     """Summary/Faculty Directory: paginated, filterable, sortable faculty list."""
     query = _query_dict_faculty(search, department, ageRange, riskLevel, sort, order, page, limit)
-    cached = get_cached(_API_PATH_FACULTY, query)
+    cached = await get_cached(_API_PATH_FACULTY, query)
     if cached is not None:
         return cached
-    resp = _list_response(
+    resp = await _list_response(
         search=search,
         department=department,
         age_range=ageRange,
@@ -102,7 +102,7 @@ async def list_faculty(
         limit=limit,
         flagged_only=False,
     )
-    set_cached(_API_PATH_FACULTY, query, resp.model_dump(mode="json"))
+    await set_cached(_API_PATH_FACULTY, query, resp.model_dump(mode="json"))
     return resp
 
 
@@ -122,10 +122,10 @@ async def list_flagged(
         query["department"] = list(department)
     if search is not None:
         query["search"] = search
-    cached = get_cached(_API_PATH_FACULTY_FLAGGED, query)
+    cached = await get_cached(_API_PATH_FACULTY_FLAGGED, query)
     if cached is not None:
         return cached
-    resp = _list_response(
+    resp = await _list_response(
         search=search,
         department=department,
         age_range=None,
@@ -136,7 +136,7 @@ async def list_flagged(
         limit=limit,
         flagged_only=True,
     )
-    set_cached(_API_PATH_FACULTY_FLAGGED, query, resp.model_dump(mode="json"))
+    await set_cached(_API_PATH_FACULTY_FLAGGED, query, resp.model_dump(mode="json"))
     return resp
 
 
@@ -151,7 +151,7 @@ async def export_faculty(
     format: Optional[str] = Query("csv", alias="format"),
 ):
     """Export faculty list as CSV or Excel (same filters as list, no pagination)."""
-    resp = _list_response(
+    resp = await _list_response(
         search=search,
         department=department,
         age_range=ageRange,
@@ -219,7 +219,7 @@ async def export_faculty_health_summary_csv(
     GET /api/faculty/export-csv
     Returns a flat CSV with one row per staff, matching the filters.
     """
-    resp = _list_response(
+    resp = await _list_response(
         search=search,
         department=department,
         age_range=ageRange,
@@ -277,7 +277,7 @@ async def download_all_faculty_reports(
     """
     import pandas as pd
 
-    resp = _list_response(
+    resp = await _list_response(
         search=search,
         department=department,
         age_range=ageRange,
@@ -386,14 +386,14 @@ async def download_all_faculty_reports(
 async def get_faculty_by_id(id: str = Path(..., alias="id")):
     """Faculty profile: single staff by id. Returns 404 if not found."""
     path = f"{_API_PATH_FACULTY_ID}/{id}"
-    cached = get_cached(path, {})
+    cached = await get_cached(path, {})
     if cached is not None:
         return cached
-    records = get_all_records()
+    records = await get_all_records()
     for r in records:
         if str(r.get("id")) == str(id):
             staff = StaffRecord(**normalize_record(r))
-            set_cached(path, {}, staff.model_dump(mode="json"))
+            await set_cached(path, {}, staff.model_dump(mode="json"))
             return staff
     raise HTTPException(status_code=404, detail="Staff not found")
 
@@ -404,7 +404,7 @@ async def download_faculty_pdf(id: str = Path(..., alias="id")):
     Download individual faculty health summary as a PDF.
     """
     # Reuse the same data source and normalization logic as the JSON profile
-    records = get_all_records()
+    records = await get_all_records()
     staff_record: Optional[StaffRecord] = None
     for r in records:
         if str(r.get("id")) == str(id):

@@ -62,11 +62,11 @@ def make_cache_key(path: str, query: Optional[dict[str, Any]] = None) -> str:
     return f"{_KEY_PREFIX}{path}"
 
 
-def get_cached(path: str, query: Optional[dict[str, Any]] = None) -> Optional[Any]:
+async def get_cached(path: str, query: Optional[dict[str, Any]] = None) -> Optional[Any]:
     """Return cached response dict if present, else None."""
     try:
         key = make_cache_key(path, query)
-        value = _redis_client().get(key)
+        value = await _redis_client().get(key)
         if value is not None:
             logger.debug("API cache HIT: %s", key)
             return value
@@ -75,7 +75,7 @@ def get_cached(path: str, query: Optional[dict[str, Any]] = None) -> Optional[An
     return None
 
 
-def set_cached(
+async def set_cached(
     path: str,
     query: Optional[dict[str, Any]] = None,
     data: Any = None,
@@ -86,7 +86,7 @@ def set_cached(
         return False
     try:
         key = make_cache_key(path, query)
-        ok = _redis_client().set(key, data, ttl=ttl)
+        ok = await _redis_client().set(key, data, ttl=ttl)
         if ok:
             logger.debug("API cache SET: %s", key)
         return bool(ok)
@@ -95,10 +95,10 @@ def set_cached(
         return False
 
 
-def clear_api_cache() -> int:
+async def clear_api_cache() -> int:
     """Delete all keys matching api:*. Call after upload or data refresh. Returns count deleted."""
     try:
-        n = _redis_client().clear_pattern(f"{_KEY_PREFIX}*")
+        n = await _redis_client().clear_pattern(f"{_KEY_PREFIX}*")
         if n:
             logger.info("API cache cleared: %s keys", n)
         return n

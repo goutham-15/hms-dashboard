@@ -27,16 +27,16 @@ _API_PATH_ALERTS = "dashboard/alerts"
 @router.get("", response_model=DashboardData)
 async def get_dashboard():
     """Executive summary: KPIs, department bar, pie, age/gender/conditions, scorecard."""
-    cached = get_cached(_API_PATH_DASHBOARD, {})
+    cached = await get_cached(_API_PATH_DASHBOARD, {})
     if cached is not None:
         return cached
-    summary = get_summary()
-    stats = get_stats()
+    summary = await get_summary()
+    stats = await get_stats()
     data = DashboardData(
         summary=DashboardSummary(**summary),
         stats=DashboardStats(**stats),
     )
-    set_cached(_API_PATH_DASHBOARD, {}, data.model_dump(mode="json"))
+    await set_cached(_API_PATH_DASHBOARD, {}, data.model_dump(mode="json"))
     return data
 
 
@@ -44,14 +44,14 @@ async def get_dashboard():
 async def get_dashboard_alerts(limit: Optional[int] = Query(None, description="Max items")):
     """Alerts strip: high-risk faculty (Critical/High Risk)."""
     query = {} if limit is None else {"limit": limit}
-    cached = get_cached(_API_PATH_ALERTS, query)
+    cached = await get_cached(_API_PATH_ALERTS, query)
     if cached is not None:
         return cached
-    alerts = get_alerts_list()
+    alerts = await get_alerts_list()
     if limit is not None and limit > 0:
         alerts = alerts[:limit]
     items = [StaffRecord(**normalize_record(r)) for r in alerts]
-    set_cached(_API_PATH_ALERTS, query, [x.model_dump(mode="json") for x in items])
+    await set_cached(_API_PATH_ALERTS, query, [x.model_dump(mode="json") for x in items])
     return items
 
 
@@ -61,8 +61,8 @@ async def export_dashboard(
     format: Optional[str] = Query("csv", alias="format", description="csv or xlsx"),
 ):
     """Export department scorecard as CSV or Excel."""
-    summary = get_summary()
-    stats = get_stats()
+    summary = await get_summary()
+    stats = await get_stats()
     dept_dist = stats.get("department_distribution") or {}
 
     rows = []
@@ -123,8 +123,8 @@ async def export_dashboard_csv():
     GET /api/dashboard/export-csv
     Exports the institutional health scorecard by department.
     """
-    summary = get_summary()
-    stats = get_stats()
+    summary = await get_summary()
+    stats = await get_stats()
     dept_dist = stats.get("department_distribution") or {}
 
     rows = []

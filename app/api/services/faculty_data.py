@@ -32,22 +32,96 @@ def get_redis() -> RedisClient:
     return _redis_client
 
 
-def _get_cached_or_refresh(key: str, default: Any, *, refresh: Callable[[], bool]) -> Any:
+async def check_and_refresh_cache() -> bool:
+    """
+    Master check: verify if ALL essential dashboard and disease analytics caches
+    are available in Redis. If ANY are missing, trigger a full refresh.
+    """
+    # 1. Core analytics keys (Data Cache)
+    core_keys = [
+        "analytics:all_records",
+        "analytics:summary",
+        "analytics:stats",
+        "analytics:alerts",
+    ]
+    
+    # 2. Disease analytics keys (API Response Cache)
+    # Note: These are stored as "api:analytics:..." by set_cached
+    disease_keys = [
+        "api:analytics:disease-summary",
+        "api:analytics:diabetes",
+        "api:analytics:cardiac",
+        "api:analytics:lipids",
+        "api:analytics:vitamins",
+        "api:analytics:renal",
+        "api:analytics:cancer-markers",
+    ]
+    
     try:
         redis_client = get_redis()
-        data = redis_client.get(key)
+        missing = False
+        
+        # Check core keys
+        for k in core_keys:
+            if await redis_client.get(k) is None:
+                missing = True
+                break
+        
+        # If core is missing, we definitely need a refresh
+        if missing:
+            logger.info("Core analytics cache missing; triggering full refresh.")
+            return await calculate_and_update_cache()
+
+        # Optional: Check disease keys.
+        for k in disease_keys:
+            if await redis_client.get(k) is None:
+                logger.debug("Disease analytics cache key %s is missing; will be lazy-loaded.", k)
+                break
+                
+        return True
+    except Exception as e:
+        logger.warning("Redis check failed during master cache validation: %s", e)
+        return False
+
+
+async def _get_cached_or_refresh(key: str, default: Any, *, refresh: Callable[[], Any]) -> Any:
+    try:
+        redis_client = get_redis()
+        data = await redis_client.get(key)
         if data is not None:
             return data
     except Exception as e:
         logger.warning("Redis get failed for %s: %s", key, e)
-    logger.info("Cache MISS for %s; fetching from DB and populating cache.", key)
-    if refresh():
-        try:
-            data = get_redis().get(key)
-            if data is not None:
-                return data
-        except Exception:
-            pass
+    
+    # If we are here, cache is missing or Redis failed.
+    # Try to refresh EVERYTHING if this is a main dashboard key.
+    if key.startswith("analytics:"):
+        logger.info("Cache MISS for %s; checking/refreshing all analytics caches.", key)
+        if await check_and_refresh_cache():
+            try:
+                data = await get_redis().get(key)
+                if data is not None:
+                    return data
+            except Exception:
+                pass
+    else:
+        # Fallback for non-analytics keys
+        logger.info("Cache MISS for %s; fetching from DB and populating cache.", key)
+        # Note: refresh() might need to be awaited if it's async, 
+        # but calculate_and_update_cache is the only one used here currently.
+        import asyncio
+        if asyncio.iscoroutinefunction(refresh):
+            res = await refresh()
+        else:
+            res = refresh()
+            
+        if res:
+            try:
+                data = await get_redis().get(key)
+                if data is not None:
+                    return data
+            except Exception:
+                pass
     return default
 
 
@@ -65,9 +139,9 @@ def _load_from_db() -> Optional[list[dict[str, Any]]]:
         return None
 
 
-def get_all_records() -> list[dict[str, Any]]:
+async def get_all_records() -> list[dict[str, Any]]:
     """Return all staff records (from cache or DB fallback)."""
-    data = _get_cached_or_refresh(
+    data = await _get_cached_or_refresh(
         "analytics:all_records",
         default=[],
         refresh=calculate_and_update_cache,
@@ -82,9 +156,9 @@ def get_all_records() -> list[dict[str, Any]]:
     return []
 
 
-def get_summary() -> dict[str, Any]:
+async def get_summary() -> dict[str, Any]:
     """Return dashboard summary (from cache or DB fallback)."""
-    data = _get_cached_or_refresh(
+    data = await _get_cached_or_refresh(
         "analytics:summary",
         default=_default_summary,
         refresh=calculate_and_update_cache,
@@ -99,9 +173,9 @@ def get_summary() -> dict[str, Any]:
     return _default_summary
 
 
-def get_stats() -> dict[str, Any]:
+async def get_stats() -> dict[str, Any]:
     """Return dashboard stats (from cache or DB fallback)."""
-    data = _get_cached_or_refresh(
+    data = await _get_cached_or_refresh(
         "analytics:stats",
         default={},
         refresh=calculate_and_update_cache,
@@ -116,9 +190,9 @@ def get_stats() -> dict[str, Any]:
     return {}
 
 
-def get_alerts_list() -> list[dict[str, Any]]:
+async def get_alerts_list() -> list[dict[str, Any]]:
     """Return alerts (Critical/High Risk) list from cache or DB fallback."""
-    data = _get_cached_or_refresh(
+    data = await _get_cached_or_refresh(
         "analytics:alerts",
         default=[],
         refresh=calculate_and_update_cache,

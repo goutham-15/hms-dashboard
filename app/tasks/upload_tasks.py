@@ -18,8 +18,15 @@ logger = get_logger(name="upload_tasks")
 db_manager = DatabaseManager()
 
 
-@shared_task(name="process_pdf_upload")
+@shared_task(
+    name="process_pdf_upload",
+    bind=True,
+    autoretry_for=(),  # No automatic retry for any exception
+    max_retries=0,     # Disable retries
+    acks_late=False    # Task is acknowledged immediately; if worker crashes, task is not redelivered
+)
 def process_pdf_upload_task(
+    self,
     pdf_path_str: str,
     original_filename: str,
     source_id: str,
@@ -70,17 +77,27 @@ def process_pdf_upload_task(
         extracted = extractor.extract(full_text=full_text, source_id=source_id)
         payload = extracted.model_dump(mode="json")
 
+        # 1. Save to Database (Critical - should fail task if this fails)
         try:
             db_manager.upsert_faculty_health_record(extracted, source_id=source_id)
             logger.info("Saved to database: source_id=%s", source_id)
         except Exception as db_error:
             logger.error("Failed to save to database: %s", db_error)
+            # Raise exception so Celery marks task as FAILURE
+            raise Exception(f"Database error: {str(db_error)}")
 
+        # 2. Update Cache (Critical - should fail task if this fails)
         try:
-            calculate_and_update_cache()
+            import asyncio
+            # calculate_and_update_cache returns True/False
+            cache_ok = asyncio.run(calculate_and_update_cache())
+            if not cache_ok:
+                raise Exception("Cache update returned False (check Redis/DB connection)")
             logger.info("Analytics cache updated after background upload")
         except Exception as cache_err:
-            logger.warning("Analytics cache update failed in task: %s", cache_err)
+            logger.error("Analytics cache update failed: %s", cache_err)
+            # Raise exception so Celery marks task as FAILURE
+            raise Exception(f"Cache update error: {str(cache_err)}")
 
         logger.info("Background extraction complete: source_id=%s", source_id)
 
@@ -97,10 +114,6 @@ def process_pdf_upload_task(
             source_id,
             e,
         )
-        return {
-            "status": "error",
-            "message": str(e),
-            "source_id": source_id,
-            "filename": original_filename,
-        }
+        # Re-raise the exception so Celery marks it as FAILURE
+        raise e
 
