@@ -8,7 +8,8 @@ from pydantic import BaseModel
 
 from app.api.endpoints import upload
 from app.api.endpoints.demo import analytics
-from app.api.endpoints import dashboard, faculty, analytics_disease, filters
+from app.api.endpoints import dashboard, faculty, analytics_disease, filters, departments, comparisons
+from app.utils.config import settings
 from app.utils.logger import get_logger
 
 logger = get_logger(name="api")
@@ -19,13 +20,20 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Allow UI at http://localhost:5173 (e.g. Vite dev server) to call the API
+# Allow UI origins configured via settings (config.yaml or environment)
+cors = settings.cors
+allow_origins = list(cors.allow_origins)
+allow_credentials = cors.allow_credentials
+if "*" in allow_origins and allow_credentials:
+    logger.warning("CORS allow_origins contains '*'; disabling allow_credentials for spec compliance.")
+    allow_credentials = False
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=allow_origins,
+    allow_credentials=allow_credentials,
+    allow_methods=list(cors.allow_methods),
+    allow_headers=list(cors.allow_headers),
 )
 
 # Setup templates and static files
@@ -77,6 +85,8 @@ app.include_router(dashboard.router, prefix="/api/dashboard", tags=["Dashboard"]
 app.include_router(faculty.router, prefix="/api/faculty", tags=["Faculty"])
 app.include_router(analytics_disease.router, prefix="/api/analytics", tags=["Analytics"])
 app.include_router(filters.router, prefix="/api/filters", tags=["Filters"])
+app.include_router(departments.router, prefix="/api/departments", tags=["Departments"])
+app.include_router(comparisons.router, prefix="/api/comparisons", tags=["Comparisons"])
 
 # Import and include cache router
 from app.api.endpoints import cache

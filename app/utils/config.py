@@ -60,6 +60,13 @@ class RedisConfig(BaseSettings):
     ttl: int = Field(default=3600)
 
 
+class CORSConfig(BaseSettings):
+    allow_origins: list[str] = Field(default_factory=lambda: ["*"])
+    allow_credentials: bool = Field(default=False)
+    allow_methods: list[str] = Field(default_factory=lambda: ["*"])
+    allow_headers: list[str] = Field(default_factory=lambda: ["*"])
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         yaml_file=Path(__file__).parent.parent.parent / "config.yaml",
@@ -71,6 +78,7 @@ class Settings(BaseSettings):
     aws: AWSConfig = Field(default_factory=AWSConfig)
     vector_db: VectorDBConfig = Field(default_factory=VectorDBConfig)
     redis: RedisConfig = Field(default_factory=RedisConfig)
+    cors: CORSConfig = Field(default_factory=CORSConfig)
 
     @classmethod
     def settings_customise_sources(

@@ -1,6 +1,7 @@
 """
 GET /api/analytics/disease — Disease Analytics page aggregates.
 """
+
 import re
 from collections import defaultdict
 from typing import Any, Optional
@@ -12,7 +13,6 @@ from app.utils.api_cache import get_cached, set_cached
 
 router = APIRouter()
 
-_API_PATH_DISEASE = "analytics/disease"
 _API_PATH_DISEASE_SUMMARY = "analytics/disease-summary"
 _API_PATH_DIABETES = "analytics/diabetes"
 _API_PATH_CARDIAC = "analytics/cardiac"
@@ -22,38 +22,6 @@ _API_PATH_RENAL = "analytics/renal"
 _API_PATH_CANCER = "analytics/cancer-markers"
 
 
-async def check_and_refresh_disease_cache(department: Optional[str] = None) -> bool:
-    """
-    Check if all essential disease analytics caches are available for a given department.
-    If any are missing, they will be naturally repopulated by the next endpoint call,
-    but this function can be used to ensure they are all present.
-    """
-    query = {} if department is None else {"department": department}
-    paths = [
-        _API_PATH_DISEASE_SUMMARY,
-        _API_PATH_DIABETES,
-        _API_PATH_CARDIAC,
-        _API_PATH_LIPIDS,
-        _API_PATH_VITAMINS,
-        _API_PATH_RENAL,
-        _API_PATH_CANCER,
-    ]
-    
-    missing = False
-    for path in paths:
-        if await get_cached(path, query) is None:
-            missing = True
-            break
-            
-    if not missing:
-        return True
-        
-    from app.utils.logger import get_logger
-    logger = get_logger(name="analytics_disease")
-    logger.info("Some disease analytics cache keys are missing for dept=%s; they will be repopulated.", department)
-    return False
-
-
 def _extract_numeric_value(val: Any) -> Optional[float]:
     """Extract float from various types (str, int, float)."""
     if val is None:
@@ -61,7 +29,6 @@ def _extract_numeric_value(val: Any) -> Optional[float]:
     if isinstance(val, (int, float)):
         return float(val)
     if isinstance(val, str):
-        # Extract numbers like "12.5" from "12.5 mg/dL"
         match = re.search(r"(\d+\.?\d*)", val)
         if match:
             return float(match.group(1))
@@ -79,11 +46,31 @@ def _get_test_value(thyro: dict, panel_key: str, test_name: str) -> Optional[flo
     return None
 
 
+def _normalize_department(dept: Optional[str]) -> str:
+    d = (dept or "").strip()
+    return d or "Others"
+
+
+def _range_label(value: float, buckets: list[dict[str, Any]]) -> Optional[str]:
+    for bucket in buckets:
+        low = bucket.get("min")
+        high = bucket.get("max")
+        if low is None and high is None:
+            return bucket["range"]
+        if low is None and value < high:
+            return bucket["range"]
+        if high is None and value >= low:
+            return bucket["range"]
+        if low is not None and high is not None and low <= value < high:
+            return bucket["range"]
+    return None
+
+
 @router.get("/disease-summary")
 async def get_disease_summary(
     department: Optional[str] = Query(None, description="Filter by department"),
 ):
-    """Counts and trends for major conditions."""
+    """Counts and optional trends for major disease flags."""
     query = {} if department is None else {"department": department}
     cached = await get_cached(_API_PATH_DISEASE_SUMMARY, query)
     if cached is not None:
@@ -91,7 +78,8 @@ async def get_disease_summary(
 
     records = await get_all_records()
     if department:
-        records = [r for r in records if (r.get("department") or "").lower() == department.lower()]
+        lower = department.lower()
+        records = [r for r in records if (r.get("department") or "").lower() == lower]
 
     summary = {
         "Cardiac": 0,
@@ -99,35 +87,42 @@ async def get_disease_summary(
         "Renal": 0,
         "Lipids": 0,
         "Vitamins": 0,
-        "CRP": 0
+        "CRP": 0,
     }
 
     for r in records:
         flags = [f.lower() for f in (r.get("active_flags") or [])]
-        if any("cardiac" in f or "heart" in f or "ecg" in f or "echo" in f for f in flags):
+        if any(
+            key in flag for flag in flags for key in ["cardiac", "heart", "ecg", "echo"]
+        ):
             summary["Cardiac"] += 1
-        if any("diabetes" in f or "sugar" in f or "hba1c" in f for f in flags):
+        if any(key in flag for flag in flags for key in ["diabetes", "sugar", "hba1c"]):
             summary["Diabetes"] += 1
-        if any("renal" in f or "kidney" in f or "egfr" in f for f in flags):
+        if any(key in flag for flag in flags for key in ["renal", "kidney", "egfr"]):
             summary["Renal"] += 1
-        if any("lipid" in f or "cholesterol" in f or "ldl" in f for f in flags):
+        if any(
+            key in flag for flag in flags for key in ["lipid", "cholesterol", "ldl"]
+        ):
             summary["Lipids"] += 1
-        if any("vitamin" in f or "b12" in f or "vit d" in f for f in flags):
+        if any(key in flag for flag in flags for key in ["vitamin", "b12", "vit d"]):
             summary["Vitamins"] += 1
-        
-        # Check CRP specifically in thyrocare results if not in flags
         thyro = r.get("thyrocare_results") or {}
-        crp_val = None
-        for p_key in thyro.keys():
-            if isinstance(thyro[p_key], list):
-                val = _get_test_value(thyro, p_key, "C-REACTIVE PROTEIN (CRP)")
-                if val is not None:
-                    crp_val = val
-                    break
-        if crp_val and crp_val > 6: # Generic high CRP threshold
-            summary["CRP"] += 1
+        for panel_key, panel in thyro.items():
+            if not isinstance(panel, list):
+                continue
+            val = _get_test_value(thyro, panel_key, "C-REACTIVE PROTEIN (CRP)")
+            if val is not None and val > 6:
+                summary["CRP"] += 1
+                break
 
-    data = [{"name": k, "count": v} for k, v in summary.items()]
+    total = len(records)
+    data = []
+    for name, count in summary.items():
+        percentage = round((count / total * 100), 1) if total else 0.0
+        data.append(
+            {"name": name, "count": count, "percentage": percentage, "trend": None}
+        )
+
     await set_cached(_API_PATH_DISEASE_SUMMARY, query, data)
     return data
 
@@ -136,7 +131,7 @@ async def get_disease_summary(
 async def get_diabetes_analytics(
     department: Optional[str] = Query(None, description="Filter by department"),
 ):
-    """HbA1c distribution and counts."""
+    """HbA1c distribution for pie and histogram data."""
     query = {} if department is None else {"department": department}
     cached = await get_cached(_API_PATH_DIABETES, query)
     if cached is not None:
@@ -144,29 +139,42 @@ async def get_diabetes_analytics(
 
     records = await get_all_records()
     if department:
-        records = [r for r in records if (r.get("department") or "").lower() == department.lower()]
+        lower = department.lower()
+        records = [r for r in records if (r.get("department") or "").lower() == lower]
 
-    dist = {"Normal (<5.7)": 0, "Pre-Diabetic (5.7-6.4)": 0, "Fair (6.5-8.0)": 0, "Poor (>8.0)": 0}
-    
+    buckets = [
+        {"range": "Normal (<5.7)", "min": None, "max": 5.7, "status": "Normal"},
+        {
+            "range": "Pre-Diabetic (5.7-6.4)",
+            "min": 5.7,
+            "max": 6.5,
+            "status": "Pre-Diabetic",
+        },
+        {"range": "Fair (6.5-8.0)", "min": 6.5, "max": 8.0, "status": "Fair"},
+        {"range": "Poor (>8.0)", "min": 8.0, "max": None, "status": "Poor"},
+    ]
+    counts = {bucket["range"]: 0 for bucket in buckets}
+
     for r in records:
         thyro = r.get("thyrocare_results") or {}
         hba1c = _get_test_value(thyro, "diabetes_panel", "HBA1C")
         if hba1c is None:
             continue
-        
-        if hba1c < 5.7:
-            dist["Normal (<5.7)"] += 1
-        elif 5.7 <= hba1c <= 6.4:
-            dist["Pre-Diabetic (5.7-6.4)"] += 1
-        elif 6.5 <= hba1c <= 8.0:
-            dist["Fair (6.5-8.0)"] += 1
-        else:
-            dist["Poor (>8.0)"] += 1
+        label = _range_label(hba1c, buckets)
+        if label:
+            counts[label] += 1
 
-    data = {
-        "distribution": [{"name": k, "count": v} for k, v in dist.items()],
-        "total_screened": sum(dist.values())
-    }
+    distribution = []
+    histogram = []
+    for bucket in buckets:
+        label = bucket["range"]
+        count = counts[label]
+        distribution.append({"label": label, "count": count, "value": count})
+        histogram.append(
+            {"range": label, "count": count, "value": count, "status": bucket["status"]}
+        )
+
+    data = {"distribution": distribution, "hba1c": histogram}
     await set_cached(_API_PATH_DIABETES, query, data)
     return data
 
@@ -175,44 +183,54 @@ async def get_diabetes_analytics(
 async def get_cardiac_analytics(
     department: Optional[str] = Query(None, description="Filter by department"),
 ):
-    """Cardiac stratification (Post-CABG, EF ranges, LVH)."""
+    """Cardiac risk stratification per department."""
     query = {} if department is None else {"department": department}
     cached = await get_cached(_API_PATH_CARDIAC, query)
     if cached is not None:
         return cached
 
     records = await get_all_records()
-    if department:
-        records = [r for r in records if (r.get("department") or "").lower() == department.lower()]
+    dept_stats: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"postCABG": 0, "efLow": 0, "efModerate": 0, "lvh": 0, "normal": 0}
+    )
 
-    stats = {
-        "Post-CABG/Stent": 0,
-        "Low EF (<50%)": 0,
-        "Normal EF (>=50%)": 0,
-        "LVH Detected": 0
-    }
-
+    lower_filter = department.lower() if department else None
     for r in records:
-        second = r.get("secondmedic_results") or {}
-        echo = second.get("echocardiogram") or {}
-        findings = ((echo.get("findings") or "") + " " + (echo.get("impression") or "")).lower()
-        
-        if any(x in findings for x in ["cabg", "stent", "revascularization"]):
-            stats["Post-CABG/Stent"] += 1
-        
-        if "ef" in findings or "ejection fraction" in findings:
-            match = re.search(r"(?:ef|ejection fraction)(?:\s+is)?\s*(\d+)%", findings)
-            if match:
-                ef = int(match.group(1))
-                if ef < 50:
-                    stats["Low EF (<50%)"] += 1
-                else:
-                    stats["Normal EF (>=50%)"] += 1
-        
-        if any(x in findings for x in ["lvh", "left ventricular hypertrophy"]):
-            stats["LVH Detected"] += 1
+        dept = _normalize_department(r.get("department"))
+        if lower_filter and dept.lower() != lower_filter:
+            continue
+        secondmedic = r.get("secondmedic_results") or {}
+        echo = secondmedic.get("echocardiogram") or {}
+        findings = (
+            (echo.get("findings") or "") + " " + (echo.get("impression") or "")
+        ).lower()
+        if any(term in findings for term in ["cabg", "stent", "revascularization"]):
+            dept_stats[dept]["postCABG"] += 1
+        if any(term in findings for term in ["lvh", "left ventricular hypertrophy"]):
+            dept_stats[dept]["lvh"] += 1
+        match = re.search(r"(?:ef|ejection fraction)(?:\s+is)?\s*(\d+)%", findings)
+        if match:
+            ef = int(match.group(1))
+            if ef < 50:
+                dept_stats[dept]["efLow"] += 1
+            elif ef < 60:
+                dept_stats[dept]["efModerate"] += 1
+            else:
+                dept_stats[dept]["normal"] += 1
 
-    data = [{"name": k, "count": v} for k, v in stats.items()]
+    data = []
+    for dept, stats in sorted(dept_stats.items(), key=lambda item: item[0]):
+        data.append(
+            {
+                "department": dept,
+                "postCABG": stats["postCABG"],
+                "efLow": stats["efLow"],
+                "efModerate": stats["efModerate"],
+                "lvh": stats["lvh"],
+                "normal": stats["normal"],
+            }
+        )
+
     await set_cached(_API_PATH_CARDIAC, query, data)
     return data
 
@@ -221,39 +239,104 @@ async def get_cardiac_analytics(
 async def get_lipids_analytics(
     department: Optional[str] = Query(None, description="Filter by department"),
 ):
-    """Lipid distribution by range."""
+    """Lipid profile overview with TC/LDL/HDL/TG range counts."""
     query = {} if department is None else {"department": department}
     cached = await get_cached(_API_PATH_LIPIDS, query)
     if cached is not None:
         return cached
 
-    records = await get_all_records()
-    if department:
-        records = [r for r in records if (r.get("department") or "").lower() == department.lower()]
+    bucket_defs = {
+        "tc": [
+            {
+                "range": "Desirable (<200)",
+                "min": None,
+                "max": 200,
+                "status": "Desirable",
+            },
+            {
+                "range": "Borderline (200-239)",
+                "min": 200,
+                "max": 240,
+                "status": "Borderline",
+            },
+            {"range": "High (>=240)", "min": 240, "max": None, "status": "High"},
+        ],
+        "ldl": [
+            {"range": "Optimal (<100)", "min": None, "max": 100, "status": "Optimal"},
+            {
+                "range": "Above Optimal (100-129)",
+                "min": 100,
+                "max": 130,
+                "status": "Above Optimal",
+            },
+            {
+                "range": "Borderline (130-159)",
+                "min": 130,
+                "max": 160,
+                "status": "Borderline",
+            },
+            {"range": "High (>=160)", "min": 160, "max": None, "status": "High"},
+        ],
+        "hdl": [
+            {"range": "Low (<40)", "min": None, "max": 40, "status": "Low"},
+            {"range": "Normal (40-59)", "min": 40, "max": 60, "status": "Normal"},
+            {"range": "High (>=60)", "min": 60, "max": None, "status": "High"},
+        ],
+        "tg": [
+            {"range": "Normal (<150)", "min": None, "max": 150, "status": "Normal"},
+            {
+                "range": "Borderline (150-199)",
+                "min": 150,
+                "max": 200,
+                "status": "Borderline",
+            },
+            {"range": "High (200-499)", "min": 200, "max": 500, "status": "High"},
+            {
+                "range": "Very High (>=500)",
+                "min": 500,
+                "max": None,
+                "status": "Very High",
+            },
+        ],
+    }
 
-    tc_dist = {"Desirable (<200)": 0, "Borderline (200-239)": 0, "High (>=240)": 0}
-    ldl_dist = {"Optimal (<100)": 0, "Above Optimal (100-129)": 0, "Borderline (130-159)": 0, "High (>=160)": 0}
-    
+    counts = {
+        key: {bucket["range"]: 0 for bucket in buckets}
+        for key, buckets in bucket_defs.items()
+    }
+
+    records = await get_all_records()
+    lower_filter = department.lower() if department else None
     for r in records:
+        dept = (r.get("department") or "").lower()
+        if lower_filter and dept != lower_filter:
+            continue
         thyro = r.get("thyrocare_results") or {}
-        tc = _get_test_value(thyro, "lipid_profile", "TOTAL CHOLESTEROL")
-        ldl = _get_test_value(thyro, "lipid_profile", "LDL CHOLESTEROL - DIRECT")
-        
-        if tc:
-            if tc < 200: tc_dist["Desirable (<200)"] += 1
-            elif tc < 240: tc_dist["Borderline (200-239)"] += 1
-            else: tc_dist["High (>=240)"] += 1
-        
-        if ldl:
-            if ldl < 100: ldl_dist["Optimal (<100)"] += 1
-            elif ldl < 130: ldl_dist["Above Optimal (100-129)"] += 1
-            elif ldl < 160: ldl_dist["Borderline (130-159)"] += 1
-            else: ldl_dist["High (>=160)"] += 1
+        metrics = {
+            "tc": _get_test_value(thyro, "lipid_profile", "TOTAL CHOLESTEROL"),
+            "ldl": _get_test_value(thyro, "lipid_profile", "LDL CHOLESTEROL - DIRECT"),
+            "hdl": _get_test_value(thyro, "lipid_profile", "HDL CHOLESTEROL - DIRECT"),
+            "tg": _get_test_value(thyro, "lipid_profile", "TRIGLYCERIDES"),
+        }
+        for key, value in metrics.items():
+            if value is None:
+                continue
+            label = _range_label(value, bucket_defs[key])
+            if label:
+                counts[key][label] += 1
 
     data = {
-        "total_cholesterol": [{"name": k, "count": v} for k, v in tc_dist.items()],
-        "ldl": [{"name": k, "count": v} for k, v in ldl_dist.items()]
+        key: [
+            {
+                "range": bucket["range"],
+                "count": counts[key][bucket["range"]],
+                "status": bucket["status"],
+            }
+            for bucket in buckets
+        ]
+        for key, buckets in bucket_defs.items()
     }
+
     await set_cached(_API_PATH_LIPIDS, query, data)
     return data
 
@@ -262,39 +345,42 @@ async def get_lipids_analytics(
 async def get_vitamins_analytics(
     department: Optional[str] = Query(None, description="Filter by department"),
 ):
-    """Vitamin D and B12 deficiency by department."""
+    """Vitamin D and B12 deficiency percentages by department."""
     query = {} if department is None else {"department": department}
     cached = await get_cached(_API_PATH_VITAMINS, query)
     if cached is not None:
         return cached
 
     records = await get_all_records()
-    dept_stats = defaultdict(lambda: {"total": 0, "vit_d_deficient": 0, "vit_b12_deficient": 0})
-    
+    dept_stats = defaultdict(
+        lambda: {"total": 0, "vit_d_deficient": 0, "vit_b12_deficient": 0}
+    )
+    lower_filter = department.lower() if department else None
+
     for r in records:
-        dept = r.get("department") or "Unknown"
-        if department and dept.lower() != department.lower():
+        dept = _normalize_department(r.get("department"))
+        if lower_filter and dept.lower() != lower_filter:
             continue
-            
         dept_stats[dept]["total"] += 1
         thyro = r.get("thyrocare_results") or {}
         vit_d = _get_test_value(thyro, "vitamins_hormones", "25 - OH VITAMIN D (TOTAL)")
         vit_b12 = _get_test_value(thyro, "vitamins_hormones", "VITAMIN B12")
-        
         if vit_d is not None and vit_d < 20:
             dept_stats[dept]["vit_d_deficient"] += 1
         if vit_b12 is not None and vit_b12 < 200:
             dept_stats[dept]["vit_b12_deficient"] += 1
 
     data = []
-    for dept, s in dept_stats.items():
-        data.append({
-            "department": dept,
-            "vit_d_pct": round((s["vit_d_deficient"] / s["total"] * 100), 1) if s["total"] > 0 else 0,
-            "vit_b12_pct": round((s["vit_b12_deficient"] / s["total"] * 100), 1) if s["total"] > 0 else 0,
-            "total": s["total"]
-        })
-    
+    for dept, stats in sorted(dept_stats.items(), key=lambda item: item[0]):
+        total = stats["total"] or 1
+        data.append(
+            {
+                "department": dept,
+                "vitD": round((stats["vit_d_deficient"] / total) * 100, 1),
+                "vitB12": round((stats["vit_b12_deficient"] / total) * 100, 1),
+            }
+        )
+
     await set_cached(_API_PATH_VITAMINS, query, data)
     return data
 
@@ -303,7 +389,7 @@ async def get_vitamins_analytics(
 async def get_renal_analytics(
     department: Optional[str] = Query(None, description="Filter by department"),
 ):
-    """eGFR Stages (1-5) distribution."""
+    """eGFR stage distribution for renal dashboard."""
     query = {} if department is None else {"department": department}
     cached = await get_cached(_API_PATH_RENAL, query)
     if cached is not None:
@@ -311,21 +397,41 @@ async def get_renal_analytics(
 
     records = await get_all_records()
     if department:
-        records = [r for r in records if (r.get("department") or "").lower() == department.lower()]
+        lower = department.lower()
+        records = [r for r in records if (r.get("department") or "").lower() == lower]
 
-    stages = {"Stage 1 (>=90)": 0, "Stage 2 (60-89)": 0, "Stage 3 (30-59)": 0, "Stage 4 (15-29)": 0, "Stage 5 (<15)": 0}
+    stages = [
+        ("Stage 1 (>=90)", 90, None, "#2c7bb6"),
+        ("Stage 2 (60-89)", 60, 90, "#abd9e9"),
+        ("Stage 3 (30-59)", 30, 60, "#fdae61"),
+        ("Stage 4 (15-29)", 15, 30, "#f46d43"),
+        ("Stage 5 (<15)", None, 15, "#d73027"),
+    ]
+    counts = {name: 0 for name, *_ in stages}
+
     for r in records:
         thyro = r.get("thyrocare_results") or {}
-        egfr = _get_test_value(thyro, "renal_kidney", "EST. GLOMERULAR FILTRATION RATE (eGFR)")
+        egfr = _get_test_value(
+            thyro, "renal_kidney", "EST. GLOMERULAR FILTRATION RATE (eGFR)"
+        )
         if egfr is None:
             continue
-        if egfr >= 90: stages["Stage 1 (>=90)"] += 1
-        elif egfr >= 60: stages["Stage 2 (60-89)"] += 1
-        elif egfr >= 30: stages["Stage 3 (30-59)"] += 1
-        elif egfr >= 15: stages["Stage 4 (15-29)"] += 1
-        else: stages["Stage 5 (<15)"] += 1
+        for name, low, high, _ in stages:
+            if low is None and egfr < high:
+                counts[name] += 1
+                break
+            if high is None and egfr >= low:
+                counts[name] += 1
+                break
+            if low is not None and high is not None and low <= egfr < high:
+                counts[name] += 1
+                break
 
-    data = [{"name": k, "count": v} for k, v in stages.items()]
+    data = [
+        {"name": name, "value": counts[name], "color": color}
+        for name, _, _, color in stages
+    ]
+
     await set_cached(_API_PATH_RENAL, query, data)
     return data
 
@@ -334,34 +440,105 @@ async def get_renal_analytics(
 async def get_cancer_markers_analytics(
     department: Optional[str] = Query(None, description="Filter by department"),
 ):
-    """Cancer markers distribution (Normal, Borderline, Elevated, Critical)."""
+    """Cancer marker surveillance table."""
     query = {} if department is None else {"department": department}
     cached = await get_cached(_API_PATH_CANCER, query)
     if cached is not None:
         return cached
 
+    marker_defs = {
+        "AFP": {
+            "panel": "liver_function",
+            "test_name": "ALPHA FETOPROTEIN (AFP)",
+            "ranges": [
+                ("normal", None, 10),
+                ("borderline", 10, 100),
+                ("elevated", 100, 1000),
+                ("critical", 1000, None),
+            ],
+        },
+        "PSA": {
+            "panel": "others",
+            "test_name": "PROSTATE SPECIFIC ANTIGEN (PSA)",
+            "ranges": [
+                ("normal", None, 4),
+                ("borderline", 4, 10),
+                ("elevated", 10, 20),
+                ("critical", 20, None),
+            ],
+        },
+        "CEA": {
+            "panel": "liver_function",
+            "test_name": "CARCINOEMBRYONIC ANTIGEN (CEA)",
+            "ranges": [
+                ("normal", None, 5),
+                ("borderline", 5, 10),
+                ("elevated", 10, 100),
+                ("critical", 100, None),
+            ],
+        },
+        "CA125": {
+            "panel": "liver_function",
+            "test_name": "CA 125",
+            "ranges": [
+                ("normal", None, 35),
+                ("borderline", 35, 100),
+                ("elevated", 100, 500),
+                ("critical", 500, None),
+            ],
+        },
+        "CA19-9": {
+            "panel": "liver_function",
+            "test_name": "CA 19-9",
+            "ranges": [
+                ("normal", None, 37),
+                ("borderline", 37, 100),
+                ("elevated", 100, 500),
+                ("critical", 500, None),
+            ],
+        },
+    }
+
+    marker_counts = {
+        name: {"normal": 0, "borderline": 0, "elevated": 0, "critical": 0}
+        for name in marker_defs
+    }
+
     records = await get_all_records()
-    if department:
-        records = [r for r in records if (r.get("department") or "").lower() == department.lower()]
+    lower_filter = department.lower() if department else None
 
-    markers = {"Normal": 0, "Borderline": 0, "Elevated": 0, "Critical": 0}
+    def _get_marker_bucket(value: float, ranges: list) -> Optional[str]:
+        for status, low, high in ranges:
+            if low is None and value < high:
+                return status
+            if high is None and value >= low:
+                return status
+            if low is not None and high is not None and low <= value < high:
+                return status
+        return None
+
     for r in records:
-        thyro = r.get("thyrocare_results") or {}
-        psa = _get_test_value(thyro, "others", "PROSTATE SPECIFIC ANTIGEN (PSA)")
-        if psa:
-            if psa < 4: markers["Normal"] += 1
-            elif psa < 10: markers["Borderline"] += 1
-            else: markers["Elevated"] += 1
+        dept = (r.get("department") or "").lower()
+        if lower_filter and dept != lower_filter:
             continue
-        flags = [f.lower() for f in (r.get("active_flags") or [])]
-        if any("cancer" in f or "marker" in f or "tumor" in f for f in flags):
-            if "critical" in r.get("status", "").lower():
-                markers["Critical"] += 1
-            elif "high risk" in r.get("status", "").lower():
-                markers["Elevated"] += 1
-            else:
-                markers["Borderline"] += 1
+        thyro = r.get("thyrocare_results") or {}
+        for marker_name, defn in marker_defs.items():
+            value = _get_test_value(thyro, defn["panel"], defn["test_name"])
+            if value is not None:
+                bucket = _get_marker_bucket(value, defn["ranges"])
+                if bucket:
+                    marker_counts[marker_name][bucket] += 1
 
-    data = [{"name": k, "count": v} for k, v in markers.items()]
+    data = [
+        {
+            "marker": name,
+            "normal": counts["normal"],
+            "borderline": counts["borderline"],
+            "elevated": counts["elevated"],
+            "critical": counts["critical"],
+        }
+        for name, counts in marker_counts.items()
+    ]
+
     await set_cached(_API_PATH_CANCER, query, data)
     return data

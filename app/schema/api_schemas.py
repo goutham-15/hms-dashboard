@@ -92,3 +92,25 @@ class DashboardStats(BaseModel):
 class DashboardData(BaseModel):
     summary: DashboardSummary
     stats: DashboardStats
+
+
+# --- Department KPIs ---
+
+class DepartmentStats(BaseModel):
+    department: str
+    headcount: int
+    critical: int
+    high_risk: int
+    moderate: int
+    healthy: int
+    avg_health_score: float
+    screening_completed: int
+    screening_rate: float
+    trend: Optional[str] = None
+
+
+class DepartmentComparison(BaseModel):
+    department: str
+    avg_health_score: float
+    risk_distribution: dict[str, int] = Field(default_factory=dict)
+    top_conditions: list[dict[str, Any]] = Field(default_factory=list)
