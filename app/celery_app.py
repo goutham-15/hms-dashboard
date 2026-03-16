@@ -26,6 +26,9 @@ celery_app.conf.update(
     accept_content=["json"],
     timezone="UTC",
     enable_utc=True,
-    result_expires=3600, # Results expire after 1 hour
+    result_expires=3600,  # Results expire after 1 hour
+    # Use solo pool to avoid fork; prevents SIGABRT with sentence-transformers/ChromaDB in workers.
+    # Override with: celery -A app.celery_app worker --pool=prefork
+    worker_pool="solo",
 )
 
